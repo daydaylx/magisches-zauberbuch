@@ -1,0 +1,4563 @@
+﻿Gesamtdokumentation: Das Magische Zauberbuch
+Dieses Dokument fasst die Planung und den bisher generierten Code für das PWA-Textadventure "Das Magische Zauberbuch" zusammen.
+Teil 1: Planungsdokument "Das Magische Zauberbuch"
+(Dieser Teil entspricht dem Inhalt des Dokuments mit der ID planning_document_projekt_spiel_1_content)
+Zusammenfassung der Datenbankstruktur für "Das Magische Zauberbuch"
+Dieses Dokument beschreibt die Struktur der PostgreSQL-Datenbank, die über Supabase für das PWA-Textadventure "Das Magische Zauberbuch" verwaltet wird.
+Hilfsfunktionen
+* public.handle_updated_at() : Eine Trigger-Funktion, die automatisch das Feld updated_at jeder Tabelle aktualisiert, wenn eine Zeile geändert wird.
+Tabellenübersicht
+1. public.game_settings
+* Zweck: Speichert globale Einstellungen für das Spiel. Es ist so konzipiert, dass es idealerweise nur eine Zeile für die primären Einstellungen gibt, identifiziert durch setting_key.
+* Spalten:
+   * id (UUID, PK, DEFAULT gen_random_uuid()): Eindeutiger Identifikator.
+   * created_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der Erstellung.
+   * updated_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der letzten Aktualisierung.
+   * setting_key (TEXT, UNIQUE, NOT NULL, DEFAULT 'primary_settings'): Ein Schlüssel, um die Einstellungszeile eindeutig zu identifizieren (z.B. "primary_settings").
+   * main_plot_outline_for_ai (TEXT): Grobe Handlungsübersicht für die KI.
+   * global_tone_style_for_ai (TEXT): Globaler Ton und Stil für KI-generierte Inhalte.
+   * default_player_char_id (UUID, FK REFERENCES characters(id) ON DELETE SET NULL): ID des Standard-Spielercharakters (optional).
+   * default_start_scene_slug (TEXT): Slug der Standard-Startszene (optional).
+   * ai_model_preference (TEXT, DEFAULT 'openai/gpt-4o'): Bevorzugtes KI-Modell.
+   * global_ai_params (JSONB, DEFAULT '{}'): Globale Parameter für die KI (z.B. Temperatur, max_tokens).
+* Trigger: on_game_settings_updated (ruft handle_updated_at auf).
+* RLS Policies:
+   * Allow public read access to game settings: Erlaubt Lesezugriff für alle.
+   * Allow admin full access to game settings: Erlaubt vollen Zugriff für die service_role (oder eine spezifische Admin-Rolle).
+2. public.characters
+* Zweck: Definiert Spielercharaktere und NPCs.
+* Spalten:
+   * id (UUID, PK, DEFAULT gen_random_uuid()): Eindeutiger Identifikator.
+   * created_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der Erstellung.
+   * updated_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der letzten Aktualisierung.
+   * character_slug (TEXT, UNIQUE, NOT NULL): Eindeutiger Kurzname/Slug für den Charakter.
+   * name (TEXT, NOT NULL): Anzeigename des Charakters.
+   * is_player_character (BOOLEAN, NOT NULL, DEFAULT FALSE): Gibt an, ob dies ein Spielercharakter ist.
+   * description_for_ai (TEXT): Beschreibung des Charakters für den KI-Kontext.
+   * initial_stats (JSONB, DEFAULT '{}'): Initiale Charakterstatistiken.
+   * initial_inventory (JSONB, DEFAULT '[]'): Initiales Inventar des Charakters.
+   * initial_flags (JSONB, DEFAULT '{}'): Initiale Flags, die für diesen Charakter gesetzt sind.
+   * avatar_url (TEXT): URL zu einem Avatarbild.
+* Indizes: idx_character_slug, idx_is_player_character.
+* Trigger: on_characters_updated (ruft handle_updated_at auf).
+* RLS Policies:
+   * Allow public read access to characters: Erlaubt Lesezugriff für alle.
+   * Allow admin full access to characters: Erlaubt vollen Zugriff für die service_role.
+3. public.scenes
+* Zweck: Speichert die einzelnen Szenen des Spiels.
+* Spalten:
+   * id (UUID, PK, DEFAULT gen_random_uuid()): Eindeutiger Identifikator.
+   * created_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der Erstellung.
+   * updated_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der letzten Aktualisierung.
+   * scene_slug (TEXT, UNIQUE, NOT NULL): Eindeutiger Kurzname/Slug für die Szene.
+   * title_for_admin (TEXT): Titel der Szene für das Admin-Panel.
+   * text_for_player (TEXT): Hauptbeschreibungstext der Szene für den Spieler.
+   * image_url (TEXT): Optionale URL zu einem Szenenbild.
+   * music_url (TEXT): Optionale URL zu Hintergrundmusik.
+   * context_description_for_ai (TEXT): Kontextbeschreibung für die KI, wenn von dieser Szene aus generiert wird.
+   * initial_prompt_for_ai (TEXT): Spezifischer Prompt für die KI, falls diese Szene ein Startpunkt für die Generierung ist.
+   * is_ai_generated (BOOLEAN, NOT NULL, DEFAULT FALSE): Gibt an, ob der Szeneninhalt KI-generiert wurde.
+   * tags (TEXT[] DEFAULT '{}'): Array für Tags (Hinzugefügt basierend auf späterer SQL-Migration)
+* Indizes: idx_scene_slug, idx_scene_tags (GIN-Index für Array-Suche, hinzugefügt basierend auf späterer SQL-Migration).
+* Trigger: on_scenes_updated (ruft handle_updated_at auf).
+* RLS Policies:
+   * Allow public read access to scenes: Erlaubt Lesezugriff für alle.
+   * Allow admin full access to scenes: Erlaubt vollen Zugriff für die service_role.
+4. public.choices
+* Zweck: Speichert die Entscheidungsoptionen, die einem Spieler in einer bestimmten Szene zur Verfügung stehen.
+* Spalten:
+   * id (UUID, PK, DEFAULT gen_random_uuid()): Eindeutiger Identifikator.
+   * created_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der Erstellung.
+   * updated_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der letzten Aktualisierung.
+   * scene_id (UUID, NOT NULL, FK REFERENCES scenes(id) ON DELETE CASCADE): ID der Szene, zu der diese Option gehört. Wird die Szene gelöscht, werden auch die Optionen gelöscht.
+   * order_in_scene (INTEGER, NOT NULL, DEFAULT 0): Reihenfolge der Anzeige der Optionen in der Szene.
+   * player_facing_text (TEXT, NOT NULL): Text der Option, der dem Spieler angezeigt wird.
+   * ai_prompt_modifier_for_next (TEXT): Zusätzlicher Text, der dem KI-Prompt hinzugefügt wird, wenn diese Option gewählt wird.
+   * leads_to_specific_scene_slug (TEXT): Slug einer vordefinierten Szene, zu der diese Option führt (optional).
+   * einfluss_level (TEXT, CHECK (einfluss_level IN ('niedrig', 'mittel', 'hoch')), DEFAULT 'niedrig'): Einflusslevel der Entscheidung.
+   * flags_to_set (JSONB, DEFAULT '{}'): Flags, die gesetzt/aktualisiert werden, wenn diese Option gewählt wird.
+   * required_flags (JSONB, DEFAULT '{}'): Flags, die erforderlich sind, damit diese Option sichtbar/verfügbar ist.
+* Indizes: idx_choices_scene_id, idx_choices_order.
+* Trigger: on_choices_updated (ruft handle_updated_at auf).
+* RLS Policies:
+   * Allow public read access to choices: Erlaubt Lesezugriff für alle.
+   * Allow admin full access to choices: Erlaubt vollen Zugriff für die service_role.
+5. public.flags_definitions
+* Zweck: Definiert die im Spiel verfügbaren Flags/Variablen, deren Typen und Standardwerte zur Referenz im Admin-Panel.
+* Spalten:
+   * id (UUID, PK, DEFAULT gen_random_uuid()): Eindeutiger Identifikator.
+   * created_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der Erstellung.
+   * updated_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der letzten Aktualisierung.
+   * flag_name (TEXT, UNIQUE, NOT NULL): Eindeutiger Name des Flags (z.B. "hatMagischenSchluessel", "spielerGesundheit").
+   * flag_type (TEXT, NOT NULL, CHECK (flag_type IN ('BOOLEAN', 'NUMBER', 'STRING'))): Datentyp des Flags.
+   * default_value (TEXT): Standardwert des Flags (als Text gespeichert, wird basierend auf flag_type interpretiert).
+   * description (TEXT): Beschreibung des Flags für das Admin-Panel.
+* Indizes: idx_flag_name.
+* Trigger: on_flags_definitions_updated (ruft handle_updated_at auf).
+* RLS Policies:
+   * Allow public read access to flag definitions: Erlaubt Lesezugriff für alle.
+   * Allow admin full access to flag definitions: Erlaubt vollen Zugriff für die service_role.
+6. public.player_sessions
+* Zweck: Speichert den Zustand der aktuellen Spielsitzung eines Spielers.
+* Spalten:
+   * id (UUID, PK, DEFAULT gen_random_uuid()): Eindeutiger Identifikator der Spielsitzung.
+   * created_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der Erstellung.
+   * updated_at (TIMESTAMPTZ, NOT NULL, DEFAULT now()): Zeitstempel der letzten Aktualisierung.
+   * player_id (UUID, FK REFERENCES auth.users(id) ON DELETE SET NULL): ID des Supabase-Auth-Benutzers (optional, falls anonyme Sessions erlaubt sind).
+   * current_scene_id (UUID, FK REFERENCES scenes(id) ON DELETE SET NULL): ID der aktuellen Szene, in der sich der Spieler befindet.
+   * player_flags (JSONB, DEFAULT '{}'): Aktueller Zustand der Flags des Spielers.
+   * player_stats (JSONB, DEFAULT '{}'): Aktuelle Statistiken des Spielers.
+   * player_inventory (JSONB, DEFAULT '[]'): Aktuelles Inventar des Spielers.
+   * last_played_at (TIMESTAMPTZ, DEFAULT now()): Zeitstempel der letzten Interaktion.
+* Indizes: idx_player_sessions_player_id, idx_player_sessions_current_scene_id.
+* Trigger: on_player_sessions_updated (ruft handle_updated_at auf).
+* RLS Policies:
+   * Players can manage their own sessions: Erlaubt Spielern vollen Zugriff (Lesen, Schreiben, Löschen) nur auf ihre eigenen Sessions (basierend auf auth.uid() = player_id).
+   * Service role full access to player sessions: Erlaubt der service_role vollen Zugriff auf alle Sessions.
+Beziehungen zwischen den Tabellen
+* game_settings kann auf einen default_player_char_id aus characters verweisen.
+* scenes ist die zentrale Tabelle für Spielinhalte.
+* choices gehört immer zu genau einer scene (1:N Beziehung, scenes zu choices).
+* player_sessions verweist auf die current_scene_id aus scenes und optional auf einen player_id aus auth.users.
+* flags_definitions ist eine Referenztabelle, die im Spiel-Logik und im Admin-Panel verwendet wird, um Flags zu definieren und zu verwalten. Die tatsächlichen Werte der Flags für einen Spieler werden in player_sessions.player_flags oder characters.initial_flags gespeichert.
+Diese Struktur bietet eine flexible Basis für dein textbasiertes Abenteuerspiel und das zugehörige Admin-Panel.
+Projekt-Setup und Konfigurationsdateien
+README.md (Auszug aus dem Originaldokument)
+# Das Magische Zauberbuch - PWA Textadventure
+
+Willkommen zum PWA Textadventure "Das Magische Zauberbuch"! Dieses Projekt umfasst ein React-Frontend (erstellt mit Vite und TypeScript) für das Spiel und ein Admin-Panel zur Verwaltung der Spielinhalte, sowie ein Supabase-Backend für die Datenspeicherung und serverseitige Logik (Edge Functions).
+
+## Features (Geplant & Teilimplementiert)
+
+* **Spieler-Frontend**:
+   * PWA für Offline-Fähigkeit.
+   * KI-gesteuerte Story-Generierung über OpenRouter (via Supabase Edge Function).
+   * Dynamische Szenen und Entscheidungen.
+* **Admin-Panel**:
+   * Login-System.
+   * CRUD-Operationen für Szenen, Charaktere, Flags und Spieleinstellungen.
+   * Vorschau-Modus für Spielszenen.
+* **Backend (Supabase)**:
+   * PostgreSQL-Datenbank.
+   * Benutzerauthentifizierung.
+   * Edge Functions für serverseitige Logik (z.B. KI-Anbindung, Spieler-Session-Management).
+
+## Projektstruktur (Vorschlag)
+/
+├── public/ # Statische Assets (Icons, Avatare, manifest.json)
+│ ├── icons/
+│ └── avatars/
+├── supabase/
+│ ├── migrations/ # SQL Datenbankmigrationen
+│ └── functions/ # Supabase Edge Functions
+│ ├── _shared/
+│ ├── generate-next-scene/
+│ └── create-player-session/
+├── src/
+│ ├── assets/ # Frontend-spezifische Assets (Bilder, Schriftarten)
+│ ├── components/
+│ │ ├── Admin/
+│ │ │ ├── Characters/
+│ │ │ ├── Flags/
+│ │ │ ├── Preview/
+│ │ │ ├── Scenes/ # z.B. SceneEditor.tsx, SceneList.tsx
+│ │ │ ├── Settings/
+│ │ │ └── Shared/ # z.B. KeyValueEditor.tsx
+│ │ ├── Game/ # z.B. SceneDisplay.tsx, PlayerUI.tsx
+│ │ └── Common/ # z.B. LoadingSpinner.tsx, ErrorMessage.tsx
+│ ├── context/ # React Context APIs (AuthContext.tsx, NotificationContext.tsx)
+│ ├── hooks/ # Benutzerdefinierte React Hooks
+│ ├── layout/ # Layout-Komponenten (AdminLayout.tsx, GameLayout.tsx)
+│ ├── pages/
+│ │ ├── admin/ # Admin-Seiten (DashboardPage.tsx, EditScenePage.tsx)
+│ │ ├── game/ # Spieler-Frontend Seiten (PlayPage.tsx, StartPage.tsx)
+│ │ ├── LoginPage.tsx
+│ │ └── NotFoundPage.tsx
+│ ├── services/ # API-Aufrufe, Supabase-Interaktionen (supabaseClient.ts, sceneService.ts)
+│ ├── styles/ # Globale Styles, Theme (adminTheme.ts)
+│ ├── types/ # TypeScript Typdefinitionen (sceneTypes.ts, gameTypes.ts)
+│ ├── utils/ # Hilfsfunktionen
+│ ├── App.tsx # Haupt-App-Komponente mit Routing
+│ ├── main.tsx # Einstiegspunkt der Vite-Anwendung
+│ └── vite-env.d.ts # Vite Umgebungs-Typdefinitionen
+├── .env.local # Lokale Umgebungsvariablen (NIE ins Git!)
+├── .env.example # Beispiel für Umgebungsvariablen
+├── .eslintrc.cjs
+├── .gitignore
+├── index.html
+├── package.json
+├── postcss.config.js
+├── tailwind.config.js # Falls Tailwind CSS verwendet wird
+├── tsconfig.json
+├── tsconfig.node.json
+└── vite.config.ts
+
+## Setup & Installation
+1.  **Repository klonen**:
+   ```bash
+   git clone <repository-url>
+   cd zauberbuch-pwa
+   ```
+2.  **Abhängigkeiten installieren**:
+   ```bash
+   npm install
+   # oder
+   # yarn install
+   ```
+3.  **Supabase Setup**:
+   * Erstelle ein Projekt auf [Supabase](https://supabase.com).
+   * Navigiere zu "Project Settings" > "API". Kopiere die **Project URL** und den **anon public Key**.
+   * Erstelle die Datenbanktabellen. Du kannst die SQL-Skripte aus `supabase/migrations/` im Supabase SQL Editor ausführen.
+   * Konfiguriere Row-Level Security (RLS) Policies für deine Tabellen.
+   * Hinterlege deinen OpenRouter API Key als Secret in den Supabase Edge Function Einstellungen (z.B. `OPENROUTER_API_KEY`).
+   * Hinterlege deinen Supabase Service Role Key als Secret (z.B. `SUPABASE_SERVICE_ROLE_KEY`).
+4.  **Umgebungsvariablen einrichten**:
+   * Kopiere `.env.example` zu `.env.local`.
+       ```bash
+       cp .env.example .env.local
+       ```
+   * Trage deine Supabase URL und den Anon Key in `.env.local` ein:
+       ```env
+       VITE_SUPABASE_URL=DEINE_SUPABASE_URL
+       VITE_SUPABASE_ANON_KEY=DEIN_SUPABASE_ANON_KEY
+       ```
+       *(Für Vite müssen Umgebungsvariablen, die im Client-Code verfügbar sein sollen, mit `VITE_` beginnen.)*
+5.  **Supabase CLI (Optional, aber empfohlen für Functions & Migrationen)**:
+   * [Installiere die Supabase CLI](https://supabase.com/docs/guides/cli).
+   * Verbinde die CLI mit deinem Projekt:
+       ```bash
+       supabase login
+       supabase link --project-ref <DEIN_PROJEKT_REF>
+       # Ggf. supabase start, falls lokal entwickelt wird
+       ```
+   * Deploye die Edge Functions:
+       ```bash
+       supabase functions deploy generate-next-scene
+       supabase functions deploy create-player-session
+       # Stelle sicher, dass die Secrets (OPENROUTER_API_KEY, SUPABASE_SERVICE_ROLE_KEY) im Supabase Dashboard gesetzt sind.
+       ```
+6.  **Entwicklungsserver starten**:
+   ```bash
+   npm run dev
+   # oder
+   # yarn dev
+   ```
+   Die Anwendung sollte unter `http://localhost:5173` (oder einem ähnlichen Port) erreichbar sein.
+
+## Verfügbare Skripte
+* `npm run dev`: Startet den Vite Entwicklungsserver.
+* `npm run build`: Erstellt einen optimierten Build für die Produktion im `dist` Ordner.
+* `npm run preview`: Startet einen lokalen Server, um den Produktionsbuild zu testen.
+* `npm run lint`: Führt ESLint aus, um Code-Qualität zu prüfen.
+
+## Admin Panel
+Das Admin Panel ist unter `/admin` zugänglich. Du musst dich mit den konfigurierten Admin-Benutzerdaten anmelden.
+
+## Technologie-Stack
+* **Frontend**: React, TypeScript, Vite, Material UI
+* **Backend**: Supabase (Auth, PostgreSQL, Edge Functions)
+* **KI-Anbindung**: OpenRouter API
+
+## Beitragende
+* Dein Name / Dein Team
+
+package.json (Auszug aus dem Originaldokument)
+{
+ "name": "zauberbuch-pwa",
+ "private": true,
+ "version": "0.0.1",
+ "type": "module",
+ "scripts": {
+   "dev": "vite",
+   "build": "tsc && vite build",
+   "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+   "preview": "vite preview"
+ },
+ "dependencies": {
+   "@emotion/react": "^11.11.4",
+   "@emotion/styled": "^11.11.5",
+   "@mui/icons-material": "^5.15.18",
+   "@mui/material": "^5.15.18",
+   "@supabase/supabase-js": "^2.43.4",
+   "notistack": "^3.0.1",
+   "react": "^18.2.0",
+   "react-dom": "^18.2.0",
+   "react-router-dom": "^6.23.1"
+ },
+ "devDependencies": {
+   "@types/react": "^18.2.66",
+   "@types/react-dom": "^18.2.22",
+   "@typescript-eslint/eslint-plugin": "^7.2.0",
+   "@typescript-eslint/parser": "^7.2.0",
+   "@vitejs/plugin-react": "^4.2.1",
+   "autoprefixer": "^10.4.19",
+   "eslint": "^8.57.0",
+   "eslint-plugin-react-hooks": "^4.6.0",
+   "eslint-plugin-react-refresh": "^0.4.6",
+   "postcss": "^8.4.38",
+   "tailwindcss": "^3.4.3",
+   "typescript": "^5.2.2",
+   "vite": "^5.2.0",
+   "vite-plugin-pwa": "^0.20.0"
+ }
+}
+
+vite.config.ts (Auszug aus dem Originaldokument)
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
+
+// https://vitejs.dev/config/
+export default defineConfig({
+ plugins: [
+   react(),
+   VitePWA({
+     registerType: 'autoUpdate',
+     injectRegister: 'auto', // oder 'script' oder 'inline'
+     workbox: {
+       globPatterns: ['**/*.{js,css,html,ico,png,svg,json,woff2,woff,ttf,otf,webp,avif}'],
+       runtimeCaching: [
+         {
+           urlPattern: ({ url }) => {
+             const supabaseHostname = `${import.meta.env.VITE_SUPABASE_PROJECT_REF}.supabase.co`;
+             return url.hostname === supabaseHostname;
+           },
+           handler: 'NetworkFirst',
+           options: { /* ... */ }
+         },
+         {
+           urlPattern: ({ url }) => url.origin === 'https://openrouter.ai',
+           handler: 'NetworkFirst',
+           options: { /* ... */ }
+         },
+         {
+           urlPattern: /\.(?:png|gif|jpg|jpeg|svg|webp|avif)$/,
+           handler: 'CacheFirst',
+           options: { /* ... */ }
+         }
+       ]
+     },
+     includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icons/icon-maskable-512x512.png'],
+     manifest: { /* ... */ }
+   })
+ ],
+ server: {
+   port: 3000,
+ },
+})
+
+.env.example (Auszug aus dem Originaldokument)
+# Supabase
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+VITE_SUPABASE_PROJECT_REF=your-project-ref
+
+# OpenRouter API Key (serverseitig)
+# OPENROUTER_API_KEY=DEIN_OPENROUTER_API_KEY
+
+# Supabase Service Role Key (serverseitig)
+# SUPABASE_SERVICE_ROLE_KEY=DEIN_SUPABASE_SERVICE_ROLE_KEY
+
+index.html (Basis) (Auszug aus dem Originaldokument)
+<!doctype html>
+<html lang="de">
+ <head>
+   <meta charset="UTF-8" />
+   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+   <meta name="theme-color" content="#00695c">
+   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+   <title>Das Magische Zauberbuch</title>
+   </head>
+ <body>
+   <div id="root"></div>
+   <script type="module" src="/src/main.tsx"></script>
+ </body>
+</html>
+
+Datenbank Migrationen (Auszug aus supabase/migrations/YYYYMMDDHHMMSS_initial_schema.sql)
+(Der SQL-Code für die Tabellenerstellung und RLS-Policies ist oben unter "Tabellenübersicht" und im separaten SQL-Dokument detailliert.)
+Supabase Edge Functions (Konzepte aus dem Originaldokument)
+* supabase/functions/_shared/cors.ts: Standard CORS Header.
+* supabase/functions/generate-next-scene/index.ts: Nimmt aktuelle Spielsituation und Spieleraktion, ruft OpenRouter API auf, generiert nächste Szene und Entscheidungen.
+* supabase/functions/create-player-session/index.ts: Erstellt neue Spielsitzung mit Standardwerten oder spezifischen Startparametern.
+React Frontend Anwendungscode (Konzepte aus dem Originaldokument)
+(Die Dateistruktur und die Inhalte der einzelnen Komponenten wurden in den vorherigen Schritten bereits detailliert generiert und sind oben in der Zusammenfassung der Projektdateien (project_files_summary_v1) verlinkt.)
+Teil 2: Implementierungscode
+Im Folgenden wird der Code für die einzelnen Dateien des Projekts aufgeführt.
+A. Basis-Projektdateien & Konfiguration
+README.md
+# Das Magische Zauberbuch - PWA Textadventure
+
+Willkommen zum PWA Textadventure "Das Magische Zauberbuch"! Dieses Projekt umfasst ein React-Frontend (erstellt mit Vite und TypeScript) für das Spiel und ein Admin-Panel zur Verwaltung der Spielinhalte, sowie ein Supabase-Backend für die Datenspeicherung und serverseitige Logik (Edge Functions).
+
+## Features (Geplant & Teilimplementiert)
+
+* **Spieler-Frontend**:
+   * PWA für Offline-Fähigkeit.
+   * KI-gesteuerte Story-Generierung über OpenRouter (via Supabase Edge Function).
+   * Dynamische Szenen und Entscheidungen.
+* **Admin-Panel**:
+   * Login-System.
+   * CRUD-Operationen für Szenen, Charaktere, Flags und Spieleinstellungen.
+   * Vorschau-Modus für Spielszenen.
+* **Backend (Supabase)**:
+   * PostgreSQL-Datenbank.
+   * Benutzerauthentifizierung.
+   * Edge Functions für serverseitige Logik (z.B. KI-Anbindung, Spieler-Session-Management).
+
+## Projektstruktur (Vorschlag)
+
+/
+├── public/ # Statische Assets (Icons, Avatare, manifest.json)
+│ ├── icons/
+│ └── avatars/
+├── supabase/
+│ ├── migrations/ # SQL Datenbankmigrationen
+│ └── functions/ # Supabase Edge Functions
+│ ├── _shared/
+│ ├── generate-next-scene/
+│ └── create-player-session/
+├── src/
+│ ├── assets/ # Frontend-spezifische Assets (Bilder, Schriftarten)
+│ ├── components/
+│ │ ├── Admin/
+│ │ │ ├── Characters/
+│ │ │ ├── Flags/
+│ │ │ ├── Preview/
+│ │ │ ├── Scenes/ # z.B. SceneEditor.tsx, SceneList.tsx
+│ │ │ ├── Settings/
+│ │ │ └── Shared/ # z.B. KeyValueEditor.tsx
+│ │ ├── Game/ # z.B. SceneDisplay.tsx, PlayerUI.tsx
+│ │ └── Common/ # z.B. LoadingSpinner.tsx, ErrorMessage.tsx
+│ ├── context/ # React Context APIs (AuthContext.tsx, NotificationContext.tsx)
+│ ├── hooks/ # Benutzerdefinierte React Hooks
+│ ├── layout/ # Layout-Komponenten (AdminLayout.tsx, GameLayout.tsx)
+│ ├── pages/
+│ │ ├── admin/ # Admin-Seiten (DashboardPage.tsx, EditScenePage.tsx)
+│ │ ├── game/ # Spieler-Frontend Seiten (PlayPage.tsx, StartPage.tsx)
+│ │ ├── LoginPage.tsx
+│ │ └── NotFoundPage.tsx
+│ ├── services/ # API-Aufrufe, Supabase-Interaktionen (supabaseClient.ts, sceneService.ts)
+│ ├── styles/ # Globale Styles, Theme (adminTheme.ts)
+│ ├── types/ # TypeScript Typdefinitionen (sceneTypes.ts, gameTypes.ts)
+│ ├── utils/ # Hilfsfunktionen
+│ ├── App.tsx # Haupt-App-Komponente mit Routing
+│ ├── main.tsx # Einstiegspunkt der Vite-Anwendung
+│ └── vite-env.d.ts # Vite Umgebungs-Typdefinitionen
+├── .env.local # Lokale Umgebungsvariablen (NIE ins Git!)
+├── .env.example # Beispiel für Umgebungsvariablen
+├── .eslintrc.cjs
+├── .gitignore
+├── index.html
+├── package.json
+├── postcss.config.js
+├── tailwind.config.js # Falls Tailwind CSS verwendet wird
+├── tsconfig.json
+├── tsconfig.node.json
+└── vite.config.ts
+
+## Setup & Installation
+
+1.  **Repository klonen**:
+   ```bash
+   git clone <repository-url>
+   cd zauberbuch-pwa
+   ```
+2.  **Abhängigkeiten installieren**:
+   ```bash
+   npm install
+   # oder
+   # yarn install
+   ```
+3.  **Supabase Setup**:
+   * Erstelle ein Projekt auf [Supabase](https://supabase.com).
+   * Navigiere zu "Project Settings" > "API". Kopiere die **Project URL** und den **anon public Key**.
+   * Erstelle die Datenbanktabellen. Du kannst die SQL-Skripte aus `supabase/migrations/` im Supabase SQL Editor ausführen.
+   * Konfiguriere Row-Level Security (RLS) Policies für deine Tabellen.
+   * Hinterlege deinen OpenRouter API Key als Secret in den Supabase Edge Function Einstellungen (z.B. `OPENROUTER_API_KEY`).
+   * Hinterlege deinen Supabase Service Role Key als Secret (z.B. `SUPABASE_SERVICE_ROLE_KEY`).
+4.  **Umgebungsvariablen einrichten**:
+   * Kopiere `.env.example` zu `.env.local`.
+       ```bash
+       cp .env.example .env.local
+       ```
+   * Trage deine Supabase URL und den Anon Key in `.env.local` ein:
+       ```env
+       VITE_SUPABASE_URL=DEINE_SUPABASE_URL
+       VITE_SUPABASE_ANON_KEY=DEIN_SUPABASE_ANON_KEY
+       ```
+       *(Für Vite müssen Umgebungsvariablen, die im Client-Code verfügbar sein sollen, mit `VITE_` beginnen.)*
+5.  **Supabase CLI (Optional, aber empfohlen für Functions & Migrationen)**:
+   * [Installiere die Supabase CLI](https://supabase.com/docs/guides/cli).
+   * Verbinde die CLI mit deinem Projekt:
+       ```bash
+       supabase login
+       supabase link --project-ref <DEIN_PROJEKT_REF>
+       # Ggf. supabase start, falls lokal entwickelt wird
+       ```
+   * Deploye die Edge Functions:
+       ```bash
+       supabase functions deploy generate-next-scene
+       supabase functions deploy create-player-session
+       # Stelle sicher, dass die Secrets (OPENROUTER_API_KEY, SUPABASE_SERVICE_ROLE_KEY) im Supabase Dashboard gesetzt sind.
+       ```
+6.  **Entwicklungsserver starten**:
+   ```bash
+   npm run dev
+   # oder
+   # yarn dev
+   ```
+   Die Anwendung sollte unter `http://localhost:5173` (oder einem ähnlichen Port) erreichbar sein.
+
+## Verfügbare Skripte
+
+* `npm run dev`: Startet den Vite Entwicklungsserver.
+* `npm run build`: Erstellt einen optimierten Build für die Produktion im `dist` Ordner.
+* `npm run preview`: Startet einen lokalen Server, um den Produktionsbuild zu testen.
+* `npm run lint`: Führt ESLint aus, um Code-Qualität zu prüfen.
+
+## Admin Panel
+
+Das Admin Panel ist unter `/admin` zugänglich. Du musst dich mit den konfigurierten Admin-Benutzerdaten anmelden.
+
+## Technologie-Stack
+
+* **Frontend**: React, TypeScript, Vite, Material UI
+* **Backend**: Supabase (Auth, PostgreSQL, Edge Functions)
+* **KI-Anbindung**: OpenRouter API
+
+## Beitragende
+
+* Dein Name / Dein Team
+
+package.json
+{
+ "name": "zauberbuch-pwa",
+ "private": true,
+ "version": "0.0.1",
+ "type": "module",
+ "scripts": {
+   "dev": "vite",
+   "build": "tsc && vite build",
+   "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+   "preview": "vite preview"
+ },
+ "dependencies": {
+   "@emotion/react": "^11.11.4",
+   "@emotion/styled": "^11.11.5",
+   "@mui/icons-material": "^5.15.18",
+   "@mui/material": "^5.15.18",
+   "@supabase/supabase-js": "^2.43.4",
+   "notistack": "^3.0.1",
+   "react": "^18.2.0",
+   "react-dom": "^18.2.0",
+   "react-router-dom": "^6.23.1",
+   "uuid": "^9.0.1"
+ },
+ "devDependencies": {
+   "@types/react": "^18.2.66",
+   "@types/react-dom": "^18.2.22",
+   "@types/uuid": "^9.0.8",
+   "@typescript-eslint/eslint-plugin": "^7.2.0",
+   "@typescript-eslint/parser": "^7.2.0",
+   "@vitejs/plugin-react": "^4.2.1",
+   "autoprefixer": "^10.4.19",
+   "eslint": "^8.57.0",
+   "eslint-plugin-react-hooks": "^4.6.0",
+   "eslint-plugin-react-refresh": "^0.4.6",
+   "postcss": "^8.4.38",
+   "tailwindcss": "^3.4.3",
+   "typescript": "^5.2.2",
+   "vite": "^5.2.0",
+   "vite-plugin-pwa": "^0.20.0"
+ }
+}
+
+vite.config.ts
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
+
+// https://vitejs.dev/config/
+export default defineConfig({
+ plugins: [
+   react(),
+   VitePWA({
+     registerType: 'autoUpdate',
+     injectRegister: 'auto', // oder 'script' oder 'inline'
+     workbox: {
+       globPatterns: ['**/*.{js,css,html,ico,png,svg,json,woff2,woff,ttf,otf,webp,avif}'],
+       runtimeCaching: [
+         {
+           urlPattern: ({ url }) => {
+             // Überprüfe, ob die URL von deiner Supabase-Instanz stammt.
+             // Ersetze 'DEINE_PROJEKT_REF' mit deiner tatsächlichen Supabase Projekt-Referenz in .env.local
+             const supabaseHostname = `${import.meta.env.VITE_SUPABASE_PROJECT_REF}.supabase.co`;
+             return url.hostname === supabaseHostname;
+           },
+           handler: 'NetworkFirst',
+           options: {
+             cacheName: 'supabase-api-cache',
+             expiration: {
+               maxEntries: 50,
+               maxAgeSeconds: 60 * 60 * 24 // 1 Tag
+             },
+             cacheableResponse: {
+               statuses: [0, 200]
+             }
+           }
+         },
+         {
+           urlPattern: ({ url }) => url.origin === 'https://openrouter.ai',
+           handler: 'NetworkFirst',
+           options: {
+             cacheName: 'openrouter-api-cache',
+             expiration: {
+               maxEntries: 20,
+               maxAgeSeconds: 60 * 60 * 1 // 1 Stunde
+             },
+             cacheableResponse: {
+               statuses: [0, 200]
+             }
+           }
+         },
+         {
+           urlPattern: /\.(?:png|gif|jpg|jpeg|svg|webp|avif)$/,
+           handler: 'CacheFirst',
+           options: {
+             cacheName: 'image-cache',
+             expiration: {
+               maxEntries: 100, // Mehr Bilder cachen
+               maxAgeSeconds: 30 * 24 * 60 * 60 // 30 Tage
+             }
+           }
+         }
+       ]
+     },
+     includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icons/icon-maskable-512x512.png'], // Stelle sicher, dass die Pfade korrekt sind
+     manifest: {
+       name: 'Das Magische Zauberbuch',
+       short_name: 'Zauberbuch',
+       description: 'Ein textbasiertes PWA Abenteuerspiel mit KI-gesteuerter Story.',
+       theme_color: '#00695c',
+       background_color: '#ffffff',
+       display: 'standalone',
+       scope: '/',
+       start_url: '/',
+       icons: [
+         {
+           src: 'icons/icon-192x192.png', // Pfad relativ zum public Ordner
+           sizes: '192x192',
+           type: 'image/png'
+         },
+         {
+           src: 'icons/icon-512x512.png',
+           sizes: '512x512',
+           type: 'image/png'
+         },
+         {
+           src: 'icons/icon-maskable-192x192.png',
+           sizes: '192x192',
+           type: 'image/png',
+           purpose: 'maskable'
+         },
+         {
+           src: 'icons/icon-maskable-512x512.png',
+           sizes: '512x512',
+           type: 'image/png',
+           purpose: 'maskable'
+         }
+       ]
+     }
+   })
+ ],
+ server: {
+   port: 3000, // Port für den Entwicklungsserver
+ },
+ // Definiere Umgebungsvariablen, die in der Vite-Konfiguration selbst verwendet werden sollen
+ // Beachte: Dies ist für Variablen, die zur Build-Zeit in der vite.config.ts selbst benötigt werden.
+ // Für Client-Code (src/) werden VITE_* Variablen aus .env-Dateien automatisch geladen.
+ // define: {
+ //   'process.env.VITE_SUPABASE_PROJECT_REF': JSON.stringify(process.env.VITE_SUPABASE_PROJECT_REF)
+ // }
+})
+
+.env.example
+# Supabase
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+VITE_SUPABASE_PROJECT_REF=your-project-ref # Für vite.config.ts Caching (Workaround)
+
+# OpenRouter API Key (wird serverseitig in Supabase Edge Functions als Secret hinterlegt)
+# OPENROUTER_API_KEY=DEIN_OPENROUTER_API_KEY
+
+# Supabase Service Role Key (wird serverseitig in Supabase Edge Functions als Secret hinterlegt)
+# SUPABASE_SERVICE_ROLE_KEY=DEIN_SUPABASE_SERVICE_ROLE_KEY
+
+index.html
+<!doctype html>
+<html lang="de">
+ <head>
+   <meta charset="UTF-8" />
+   <link rel="icon" type="image/svg+xml" href="/favicon.svg" /> <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+   <meta name="theme-color" content="#00695c"> <link rel="apple-touch-icon" href="/apple-touch-icon.png"> <title>Das Magische Zauberbuch</title>
+   <link
+     rel="stylesheet"
+     href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap"
+   />
+   <link
+     rel="stylesheet"
+     href="https://fonts.googleapis.com/icon?family=Material+Icons"
+   />
+   <link rel="preconnect" href="https://fonts.googleapis.com">
+   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Cinzel+Decorative:wght@400;700&family=Quintessential&family=MedievalSharp&family=EB+Garamond:ital,wght@0,400;0,700;1,400&family=Roboto+Slab:wght@400;700&display=swap" rel="stylesheet">
+
+ </head>
+ <body>
+   <div id="root"></div> <script type="module" src="/src/main.tsx"></script> </body>
+</html>
+
+B. Supabase Backend
+supabase/migrations/initial_schema.sql
+-- supabase/migrations/YYYYMMDDHHMMSS_initial_schema.sql
+-- Ersetze YYYYMMDDHHMMSS mit dem aktuellen Zeitstempel, wenn du die Datei im Migrationsordner speicherst.
+
+-- Hilfsfunktion, um 'updated_at' Zeitstempel automatisch zu aktualisieren
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.updated_at = now();
+   RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Tabelle: game_settings
+-- Speichert globale Einstellungen für das Spiel.
+CREATE TABLE public.game_settings (
+   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+   created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   setting_key TEXT UNIQUE NOT NULL DEFAULT 'primary_settings', -- Um sicherzustellen, dass es nur eine Einstellungszeile gibt
+   main_plot_outline_for_ai TEXT,
+   global_tone_style_for_ai TEXT,
+   default_player_char_id UUID, -- Wird später als FK zu 'characters' hinzugefügt
+   default_start_scene_slug TEXT, -- Verweist auf scene_slug in 'scenes'
+   ai_model_preference TEXT DEFAULT 'openai/gpt-4o',
+   global_ai_params JSONB DEFAULT '{}'::jsonb
+);
+
+-- Trigger für game_settings updated_at
+CREATE TRIGGER on_game_settings_updated
+ BEFORE UPDATE ON public.game_settings
+ FOR EACH ROW
+ EXECUTE PROCEDURE public.handle_updated_at();
+
+-- Tabelle: characters
+-- Speichert Charakterdefinitionen, sowohl für Spieler als auch für NPCs.
+CREATE TABLE public.characters (
+   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+   created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   character_slug TEXT UNIQUE NOT NULL,
+   name TEXT NOT NULL,
+   is_player_character BOOLEAN DEFAULT FALSE NOT NULL,
+   description_for_ai TEXT, -- Beschreibung für den KI-Kontext
+   initial_stats JSONB DEFAULT '{}'::jsonb,
+   initial_inventory JSONB DEFAULT '[]'::jsonb, -- Array von Items/Objekten
+   initial_flags JSONB DEFAULT '{}'::jsonb, -- Key-Value Paare für Start-Flags
+   avatar_url TEXT -- URL zu einem Bild in public/avatars/ oder eine externe URL
+);
+
+CREATE INDEX idx_character_slug ON public.characters(character_slug);
+CREATE INDEX idx_is_player_character ON public.characters(is_player_character);
+
+-- Trigger für characters updated_at
+CREATE TRIGGER on_characters_updated
+ BEFORE UPDATE ON public.characters
+ FOR EACH ROW
+ EXECUTE PROCEDURE public.handle_updated_at();
+
+-- Füge Fremdschlüssel von game_settings zu characters hinzu (nachdem characters Tabelle erstellt wurde)
+ALTER TABLE public.game_settings ADD CONSTRAINT fk_default_player_char
+   FOREIGN KEY (default_player_char_id) REFERENCES public.characters(id) ON DELETE SET NULL;
+
+-- Tabelle: scenes
+-- Speichert einzelne Szenen des Spiels.
+CREATE TABLE public.scenes (
+   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+   created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   scene_slug TEXT UNIQUE NOT NULL,
+   title_for_admin TEXT, -- Titel sichtbar im Admin-Panel
+   text_for_player TEXT, -- Der Hauptbeschreibungstext für den Spieler
+   image_url TEXT,       -- Optionale Bild-URL für die Szene
+   music_url TEXT,       -- Optionale Hintergrundmusik-URL für die Szene
+   context_description_for_ai TEXT, -- Kontext für die KI, wenn von dieser Szene aus generiert wird
+   initial_prompt_for_ai TEXT,   -- Spezifischer Prompt für KI, falls diese Szene ein Startpunkt ist
+   is_ai_generated BOOLEAN DEFAULT FALSE NOT NULL, -- Flag, ob der Szeneninhalt KI-generiert wurde
+   tags TEXT[] DEFAULT '{}'::text[] -- Array für Tags
+);
+
+CREATE INDEX idx_scene_slug ON public.scenes(scene_slug);
+CREATE INDEX idx_scene_tags ON public.scenes USING GIN (tags); -- GIN-Index für Array-Suche
+
+-- Trigger für scenes updated_at
+CREATE TRIGGER on_scenes_updated
+ BEFORE UPDATE ON public.scenes
+ FOR EACH ROW
+ EXECUTE PROCEDURE public.handle_updated_at();
+
+-- Tabelle: choices
+-- Speichert die Entscheidungsoptionen, die einem Spieler in einer Szene zur Verfügung stehen.
+CREATE TABLE public.choices (
+   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+   created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   scene_id UUID NOT NULL REFERENCES public.scenes(id) ON DELETE CASCADE, -- Wenn Szene gelöscht wird, werden auch Optionen gelöscht
+   order_in_scene INTEGER NOT NULL DEFAULT 0, -- Reihenfolge der Anzeige
+   player_facing_text TEXT NOT NULL, -- Text, der dem Spieler angezeigt wird
+   ai_prompt_modifier_for_next TEXT, -- Zusätzlicher Text für KI-Prompt
+   leads_to_specific_scene_slug TEXT, -- Slug einer vordefinierten Szene (optional)
+   einfluss_level TEXT CHECK (einfluss_level IN ('niedrig', 'mittel', 'hoch')) DEFAULT 'niedrig', -- Einflusslevel
+   flags_to_set JSONB DEFAULT '{}'::jsonb, -- Flags, die gesetzt werden (z.B. {"has_key": true, "gold": "+10"})
+   required_flags JSONB DEFAULT '{}'::jsonb -- Benötigte Flags (z.B. {"quest_accepted": true})
+);
+
+CREATE INDEX idx_choices_scene_id ON public.choices(scene_id);
+CREATE INDEX idx_choices_order ON public.choices(scene_id, order_in_scene);
+
+-- Trigger für choices updated_at
+CREATE TRIGGER on_choices_updated
+ BEFORE UPDATE ON public.choices
+ FOR EACH ROW
+ EXECUTE PROCEDURE public.handle_updated_at();
+
+-- Tabelle: flags_definitions
+-- Definiert verfügbare Flags/Variablen im Spiel, deren Typen und Standardwerte.
+CREATE TABLE public.flags_definitions (
+   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+   created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   flag_name TEXT UNIQUE NOT NULL, -- z.B., "hatMagischenSchluessel", "spielerGesundheit"
+   flag_type TEXT NOT NULL CHECK (flag_type IN ('BOOLEAN', 'NUMBER', 'STRING')),
+   default_value TEXT, -- Als Text gespeichert, wird basierend auf flag_type interpretiert
+   description TEXT -- Beschreibung für Admin-Panel
+);
+
+CREATE INDEX idx_flag_name ON public.flags_definitions(flag_name);
+
+-- Trigger für flags_definitions updated_at
+CREATE TRIGGER on_flags_definitions_updated
+ BEFORE UPDATE ON public.flags_definitions
+ FOR EACH ROW
+ EXECUTE PROCEDURE public.handle_updated_at();
+
+-- Tabelle: player_sessions
+-- Speichert den Zustand der aktuellen Spielsitzung eines Spielers.
+CREATE TABLE public.player_sessions (
+   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+   created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+   player_id UUID REFERENCES auth.users(id) ON DELETE SET NULL, -- Verknüpfung zu Supabase Auth User (optional)
+   current_scene_id UUID REFERENCES public.scenes(id) ON DELETE SET NULL, -- Aktuelle Szene des Spielers
+   player_flags JSONB DEFAULT '{}'::jsonb, -- Aktueller Zustand der Spieler-Flags
+   player_stats JSONB DEFAULT '{}'::jsonb, -- Aktuelle Spieler-Statistiken
+   player_inventory JSONB DEFAULT '[]'::jsonb, -- Aktuelles Spieler-Inventar
+   last_played_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_player_sessions_player_id ON public.player_sessions(player_id);
+CREATE INDEX idx_player_sessions_current_scene_id ON public.player_sessions(current_scene_id);
+
+-- Trigger für player_sessions updated_at
+CREATE TRIGGER on_player_sessions_updated
+ BEFORE UPDATE ON public.player_sessions
+ FOR EACH ROW
+ EXECUTE PROCEDURE public.handle_updated_at();
+
+-- Row Level Security (RLS) für alle Tabellen aktivieren
+ALTER TABLE public.game_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.characters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.scenes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.choices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.flags_definitions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.player_sessions ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies Beispiele:
+-- Diese sind grundlegende Beispiele. Du musst sie basierend auf deiner genauen Auth-Logik verfeinern.
+
+-- Für game_settings:
+CREATE POLICY "Allow public read access to game settings" ON public.game_settings
+ FOR SELECT USING (true);
+CREATE POLICY "Allow admin full access to game settings" ON public.game_settings
+   FOR ALL
+   USING (auth.role() = 'service_role') -- Oder prüfe auf eine spezifische Admin-Rolle
+   WITH CHECK (auth.role() = 'service_role');
+
+-- Für characters, scenes, choices, flags_definitions (öffentlicher Lesezugriff, Admin Vollzugriff):
+CREATE POLICY "Allow public read access to characters" ON public.characters FOR SELECT USING (true);
+CREATE POLICY "Allow admin full access to characters" ON public.characters FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "Allow public read access to scenes" ON public.scenes FOR SELECT USING (true);
+CREATE POLICY "Allow admin full access to scenes" ON public.scenes FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "Allow public read access to choices" ON public.choices FOR SELECT USING (true);
+CREATE POLICY "Allow admin full access to choices" ON public.choices FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "Allow public read access to flag definitions" ON public.flags_definitions FOR SELECT USING (true);
+CREATE POLICY "Allow admin full access to flag definitions" ON public.flags_definitions FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+
+
+-- Für player_sessions:
+CREATE POLICY "Players can manage their own sessions" ON public.player_sessions
+ FOR ALL
+ USING (auth.uid() = player_id)
+ WITH CHECK (auth.uid() = player_id);
+
+CREATE POLICY "Service role full access to player sessions" ON public.player_sessions
+ FOR ALL
+ USING (auth.role() = 'service_role')
+ WITH CHECK (auth.role() = 'service_role');
+
+-- Initiale Spieleeinstellungen einfügen (optional, kann auch über Admin UI erfolgen)
+INSERT INTO public.game_settings (setting_key, main_plot_outline_for_ai, global_tone_style_for_ai, ai_model_preference)
+VALUES (
+   'primary_settings',
+   'Ein junger Held entdeckt ein magisches Buch und muss die Welt vor einer alten Bedrohung retten.',
+   'Episch, leicht düster, mit einem Hauch von Humor.',
+   'openai/gpt-4o'
+) ON CONFLICT (setting_key) DO NOTHING;
+
+-- Berechtigungen für anon und authenticated Rollen auf Schema public erteilen
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT USAGE ON SCHEMA public TO authenticated;
+
+-- SELECT-Berechtigungen für Tabellen an anon und authenticated Rollen erteilen (gemäß öffentlicher Leserechte oben)
+GRANT SELECT ON TABLE public.game_settings TO anon;
+GRANT SELECT ON TABLE public.game_settings TO authenticated;
+
+GRANT SELECT ON TABLE public.characters TO anon;
+GRANT SELECT ON TABLE public.characters TO authenticated;
+
+GRANT SELECT ON TABLE public.scenes TO anon;
+GRANT SELECT ON TABLE public.scenes TO authenticated;
+
+GRANT SELECT ON TABLE public.choices TO anon;
+GRANT SELECT ON TABLE public.choices TO authenticated;
+
+GRANT SELECT ON TABLE public.flags_definitions TO anon;
+GRANT SELECT ON TABLE public.flags_definitions TO authenticated;
+
+-- Für player_sessions benötigen authentifizierte Benutzer spezifischere Rechte, die durch RLS oben definiert sind.
+-- Die service_role hat bereits vollen Zugriff.
+-- Wenn anonyme Sessions erlaubt sind und diese ihre eigenen Sessions lesen sollen, muss eine entsprechende RLS Policy hinzugefügt werden.
+-- Standardmäßig können anonyme Benutzer keine player_sessions lesen, es sei denn, es gibt eine explizite RLS-Richtlinie dafür.
+
+-- Beispiel: Erlaube authentifizierten Benutzern, ihre eigenen Player-Sessions zu lesen (bereits durch "Players can manage their own sessions" abgedeckt für auth.uid() = player_id)
+-- Erlaube authentifizierten Benutzern, neue Player-Sessions für sich selbst zu erstellen (bereits durch "Players can manage their own sessions" abgedeckt)
+GRANT INSERT, SELECT, UPDATE, DELETE ON TABLE public.player_sessions TO authenticated;
+
+
+-- Wichtig: Überprüfe und passe die GRANT-Berechtigungen und RLS-Policies genau an deine Sicherheitsanforderungen an.
+-- Die oben genannten GRANTs sind ein allgemeiner Ausgangspunkt.
+
+supabase/functions/_shared/cors.ts
+// File: supabase/functions/_shared/cors.ts
+
+// Standard CORS Headers für alle Edge Functions
+export const corsHeaders = {
+ 'Access-Control-Allow-Origin': '*', // Für Entwicklung; in Produktion auf deine Frontend-URL beschränken
+ 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+ 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS, PUT, DELETE', // Erlaubte Methoden
+};
+
+supabase/functions/generate-next-scene/index.ts
+// File: supabase/functions/generate-next-scene/index.ts
+
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { corsHeaders } from '../_shared/cors.ts'; // Importiere die CORS-Header
+
+// Definiere die erwartete Struktur der KI-Antwort
+interface AiChoice {
+ text: string;
+}
+
+interface AiGeneratedContent {
+ new_scene_title: string;
+ new_scene_description: string;
+ new_choices: AiChoice[];
+ image_prompt?: string; // Optionaler Prompt für ein Bildgenerierungsmodell
+ music_url?: string;    // Optionale URL für Hintergrundmusik
+ error?: string;        // Fehlerfeld für die KI-Antwort
+}
+
+// Funktion zum Aufrufen der OpenRouter API
+async function callOpenRouter(
+ prompt: string,
+ apiKey: string,
+ model: string = 'openai/gpt-4o', // Standardmodell, kann über game_settings überschrieben werden
+ globalAiParams: Record<string, any> = {} // Globale Parameter aus game_settings
+): Promise<AiGeneratedContent> {
+ console.log(`Calling OpenRouter with model: ${model}`);
+ const body = {
+   model: model,
+   messages: [
+     {
+       role: "system",
+       content: `Du bist ein Storytelling-Assistent für ein textbasiertes Abenteuerspiel. Generiere eine fesselnde, kurze nächste Szene (max. 3-4 Sätze) und 2-4 passende Multiple-Choice-Entscheidungen für den Spieler. Antworte IMMER im JSON-Format: {
+ "new_scene_title": "Titel der neuen Szene (kurz)",
+ "new_scene_description": "Beschreibung der neuen Szene.",
+ "new_choices": [
+   { "text": "Option 1 Text" },
+   { "text": "Option 2 Text" }
+ ],
+ "image_prompt": "Optionaler Prompt für ein Bild zu dieser Szene (z.B. 'mystischer Wald bei Nacht')",
+ "music_url": "Optionale URL zu passender Hintergrundmusik (z.B. Creative Commons)"
+}
+Achte darauf, dass die Entscheidungen offen genug sind, um die Geschichte interessant weiterzuführen. Vermeide es, das Spiel zu beenden, es sei denn, der Prompt fordert explizit ein Ende. Die 'new_choices' sollten nur den 'text' enthalten. Keine weiteren Felder wie 'sets_flag_id'.`
+     },
+     { role: "user", content: prompt }
+   ],
+   temperature: globalAiParams.temperature || 0.7, // Nutze globale oder Standard-Temperatur
+   max_tokens: globalAiParams.max_tokens || 500,   // Nutze globale oder Standard-max_tokens
+   ...globalAiParams // Füge weitere globale Parameter hinzu (z.B. top_p etc.)
+ };
+
+ const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+   method: "POST",
+   headers: {
+     "Authorization": `Bearer ${apiKey}`,
+     "Content-Type": "application/json",
+     "HTTP-Referer": Deno.env.get("SUPABASE_URL") ?? "http://localhost", // Wichtig für OpenRouter
+     "X-Title": "Zauberbuch PWA" // Wichtig für OpenRouter
+   },
+   body: JSON.stringify(body),
+ });
+
+ if (!response.ok) {
+   const errTxt = await response.text();
+   console.error("OpenRouter API Error:", response.status, errTxt);
+   return {
+     new_scene_title: "Fehler bei der Szenengenerierung",
+     new_scene_description: `Ein Fehler ist beim Kontaktieren des Orakels aufgetreten (Fehlercode: ${response.status}). Versuche es später erneut oder wähle eine andere Option.`,
+     new_choices: [{ text: "Zurück zur vorherigen Entscheidung (simuliert)" }], // Simuliert, da wir den vorherigen Zustand hier nicht haben
+     error: `OpenRouter API Error: ${response.status} - ${errTxt}`
+   };
+ }
+
+ const data = await response.json();
+
+ try {
+   // Die KI soll direkt ein JSON-Objekt im 'content'-Feld zurückgeben.
+   const messageContent = data.choices[0].message.content;
+   let parsedResponse: AiGeneratedContent;
+
+   if (typeof messageContent === 'string') {
+     // Versuche, den String als JSON zu parsen
+     parsedResponse = JSON.parse(messageContent);
+   } else if (typeof messageContent === 'object' && messageContent !== null) {
+     // Wenn es bereits ein Objekt ist (manche Modelle tun das)
+     parsedResponse = messageContent as AiGeneratedContent;
+   } else {
+     throw new Error("Unerwartetes Format des message.content Feldes.");
+   }
+
+   // Validierung der minimal erforderlichen Felder
+   if (!parsedResponse.new_scene_description || !parsedResponse.new_choices || !Array.isArray(parsedResponse.new_choices) || parsedResponse.new_choices.length === 0) {
+     console.error("Unexpected AI response format after parsing:", parsedResponse);
+     throw new Error("AI response format error: new_scene_description or new_choices are missing or invalid.");
+   }
+   // Stelle sicher, dass choices das richtige Format haben
+   parsedResponse.new_choices = parsedResponse.new_choices.map(choice => ({ text: choice.text }));
+
+   return parsedResponse;
+ } catch (e: any) {
+   console.error("Error parsing AI response:", e, data?.choices?.[0]?.message?.content);
+   return {
+     new_scene_title: "Fehler beim Verstehen des Orakels",
+     new_scene_description: "Das Orakel sprach in Rätseln, die nicht gedeutet werden konnten. Die Verbindung ist gestört.",
+     new_choices: [{ text: "Erneut versuchen (simuliert)" }],
+     error: `Error parsing AI response: ${e.message}`
+   };
+ }
+}
+
+
+// Haupt-Handler für die Edge Function
+serve(async (req: Request) => {
+ // Handle CORS preflight requests
+ if (req.method === 'OPTIONS') {
+   return new Response('ok', { headers: corsHeaders });
+ }
+
+ try {
+   const {
+     player_session_id, // UUID der aktuellen Spielsitzung
+     chosen_option_id   // UUID der vom Spieler gewählten Option
+   } = await req.json();
+
+   if (!player_session_id || !chosen_option_id) {
+     return new Response(JSON.stringify({ error: "player_session_id and chosen_option_id are required." }), {
+       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+       status: 400
+     });
+   }
+
+   // Supabase Client initialisieren, um auf die Datenbank zuzugreifen
+   // Wichtig: Verwende den SERVICE_ROLE_KEY für Operationen, die Admin-Rechte erfordern oder RLS umgehen sollen.
+   const supabaseClient = createClient(
+     Deno.env.get('SUPABASE_URL')!,
+     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')! // SERVICE_ROLE_KEY für Backend-Operationen
+   );
+
+   // 1. Lade aktuelle Player Session und die zugehörige Szene und gewählte Option
+   const { data: sessionData, error: sessionError } = await supabaseClient
+     .from('player_sessions')
+     .select(`
+       id,
+       player_flags,
+       player_stats,
+       player_inventory,
+       current_scene:scenes (
+         id,
+         scene_slug,
+         text_for_player,
+         context_description_for_ai,
+         initial_prompt_for_ai
+       )
+     `)
+     .eq('id', player_session_id)
+     .single();
+
+   if (sessionError || !sessionData || !sessionData.current_scene) {
+     console.error('Error fetching player session or current scene:', sessionError);
+     return new Response(JSON.stringify({ error: 'Player session or current scene not found.' }), {
+       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+       status: 404
+     });
+   }
+
+   const { data: choiceData, error: choiceError } = await supabaseClient
+     .from('choices')
+     .select('*')
+     .eq('id', chosen_option_id)
+     .eq('scene_id', sessionData.current_scene.id) // Sicherstellen, dass die Option zur aktuellen Szene gehört
+     .single();
+
+   if (choiceError || !choiceData) {
+     console.error('Error fetching chosen option:', choiceError);
+     return new Response(JSON.stringify({ error: 'Chosen option not found or does not belong to the current scene.' }), {
+       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+       status: 404
+     });
+   }
+
+   // 2. Flags basierend auf der Wahl aktualisieren (aus choiceData.flags_to_set)
+   let updatedPlayerFlags = { ...(sessionData.player_flags || {}) };
+   if (choiceData.flags_to_set) {
+     for (const key in choiceData.flags_to_set) {
+       const value = choiceData.flags_to_set[key];
+       if (typeof value === 'string' && value.startsWith('+') && !isNaN(Number(value.substring(1)))) {
+         updatedPlayerFlags[key] = (updatedPlayerFlags[key] || 0) + Number(value.substring(1));
+       } else if (typeof value === 'string' && value.startsWith('-') && !isNaN(Number(value.substring(1)))) {
+         updatedPlayerFlags[key] = (updatedPlayerFlags[key] || 0) - Number(value.substring(1));
+       } else {
+         updatedPlayerFlags[key] = value;
+       }
+     }
+   }
+
+   let nextSceneRecord;
+   let nextChoicesData = [];
+
+   // 3. Bestimme die nächste Szene
+   if (choiceData.leads_to_specific_scene_slug) {
+     // Option führt zu einer vordefinierten Szene
+     const { data: specificScene, error: specificSceneError } = await supabaseClient
+       .from('scenes')
+       .select('*, choices(*, order_in_scene)') // Lade auch die Choices für die spezifische Szene
+       .eq('scene_slug', choiceData.leads_to_specific_scene_slug)
+       .single();
+
+     if (specificSceneError || !specificScene) {
+       console.error(`Error fetching specific next scene by slug '${choiceData.leads_to_specific_scene_slug}':`, specificSceneError);
+       return new Response(JSON.stringify({ error: `Specific next scene '${choiceData.leads_to_specific_scene_slug}' not found.` }), {
+         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+         status: 404
+       });
+     }
+     nextSceneRecord = specificScene;
+     nextChoicesData = (specificScene.choices || [])
+       .sort((a: any,b: any) => (a.order_in_scene ?? 0) - (b.order_in_scene ?? 0))
+       .map((c: any) => ({ id: c.id, text: c.player_facing_text }));
+
+   } else {
+     // KI generiert die nächste Szene
+     const apiKey = Deno.env.get('OPENROUTER_API_KEY');
+     if (!apiKey) {
+       console.error('OPENROUTER_API_KEY not set for AI generation.');
+       return new Response(JSON.stringify({ error: 'API Key for AI generation is missing on server-side.' }), {
+         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+         status: 500
+       });
+     }
+
+     const { data: gameSettings, error: gsError } = await supabaseClient
+       .from('game_settings')
+       .select('ai_model_preference, global_ai_params, main_plot_outline_for_ai, global_tone_style_for_ai')
+       .eq('setting_key', 'primary_settings')
+       .single();
+
+     if (gsError) console.warn("Could not load game settings for AI parameters.", gsError.message);
+
+     let prompt = `Kontext: ${sessionData.current_scene.context_description_for_ai || sessionData.current_scene.text_for_player}\n`;
+     if (sessionData.current_scene.initial_prompt_for_ai) {
+       prompt += `Ursprünglicher Prompt für diese Szene: ${sessionData.current_scene.initial_prompt_for_ai}\n`;
+     }
+     prompt += `Spieler hat gewählt: "${choiceData.player_facing_text}".\n`;
+     if (choiceData.ai_prompt_modifier_for_next) {
+       prompt += `Zusätzlicher Kontext für diese Wahl: "${choiceData.ai_prompt_modifier_for_next}".\n`;
+     }
+     prompt += `Aktuelle Spieler-Flags: ${JSON.stringify(updatedPlayerFlags)}.\n`;
+     if (gameSettings?.main_plot_outline_for_ai) {
+       prompt += `Übergeordneter Plot: ${gameSettings.main_plot_outline_for_ai}\n`;
+     }
+     if (gameSettings?.global_tone_style_for_ai) {
+       prompt += `Gewünschter Ton: ${gameSettings.global_tone_style_for_ai}\n`;
+     }
+     prompt += `Generiere jetzt den Titel der nächsten Szene, den Text für die nächste Szene und 2-4 prägnante Entscheidungsoptionen für den Spieler im JSON-Format.`;
+
+     const aiResponse = await callOpenRouter(
+       prompt,
+       apiKey,
+       gameSettings?.ai_model_preference || undefined,
+       gameSettings?.global_ai_params || undefined
+     );
+
+     if (aiResponse.error) {
+       return new Response(JSON.stringify(aiResponse), { // aiResponse enthält bereits Fehlerdetails
+         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+         status: 500 // Oder einen spezifischeren Fehlercode, falls von aiResponse bereitgestellt
+       });
+     }
+
+     // Erstelle einen einzigartigen Slug für die KI-generierte Szene
+     const aiSceneSlug = `ki-${sessionData.current_scene.scene_slug}-${Date.now()}`;
+
+     // Speichere die KI-generierte Szene in der 'scenes' Tabelle
+     const { data: tempScene, error: tempSceneError } = await supabaseClient
+       .from('scenes')
+       .insert({
+         scene_slug: aiSceneSlug,
+         title_for_admin: aiResponse.new_scene_title || `KI Szene nach: ${sessionData.current_scene.scene_slug}`,
+         text_for_player: aiResponse.new_scene_description,
+         image_url: aiResponse.image_prompt ? `https://image.pollinations.ai/prompt/${encodeURIComponent(aiResponse.image_prompt)}` : null, // Beispiel für Bildgenerierung
+         music_url: aiResponse.music_url, // Falls von KI bereitgestellt
+         context_description_for_ai: `KI-generiert basierend auf Wahl: "${choiceData.player_facing_text}" in Szene "${sessionData.current_scene.scene_slug}". Spieler-Prompt: ${aiResponse.new_scene_description.substring(0,100)}...`,
+         initial_prompt_for_ai: "Fortsetzung der KI-generierten Geschichte.",
+         is_ai_generated: true,
+         // tags könnten hier auch basierend auf dem Inhalt gesetzt werden, falls gewünscht
+       })
+       .select()
+       .single();
+
+     if (tempSceneError || !tempScene) {
+       console.error('Error inserting AI generated scene:', tempSceneError);
+       return new Response(JSON.stringify({ error: 'Could not save AI generated scene.' }), {
+         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+         status: 500
+       });
+     }
+     nextSceneRecord = tempScene;
+
+     // Speichere die KI-generierten Choices in der 'choices' Tabelle
+     const tempChoicesToSave = aiResponse.new_choices.map((choice, index) => ({
+       scene_id: tempScene.id,
+       player_facing_text: choice.text,
+       order_in_scene: index,
+       // Weitere Felder wie leads_to_specific_scene_slug, flags_to_set etc. könnten hier von der KI kommen,
+       // aber im aktuellen System-Prompt sind sie nicht vorgesehen und werden daher nicht gesetzt.
+     }));
+
+     if (tempChoicesToSave.length > 0) {
+       const { data: insertedTempChoices, error: tempChoicesError } = await supabaseClient
+         .from('choices')
+         .insert(tempChoicesToSave)
+         .select();
+
+       if (tempChoicesError) {
+         console.error('Error inserting AI generated choices:', tempChoicesError);
+         // Fahre trotzdem fort, aber die Szene hat dann keine Optionen
+       } else {
+         nextChoicesData = (insertedTempChoices || []).map((c: any) => ({ id: c.id, text: c.player_facing_text }));
+       }
+     }
+   }
+
+   // 4. Player Session in DB aktualisieren
+   const { data: updatedSessionData, error: updateSessionError } = await supabaseClient
+     .from('player_sessions')
+     .update({
+       current_scene_id: nextSceneRecord.id,
+       player_flags: updatedPlayerFlags,
+       last_played_at: new Date().toISOString(),
+     })
+     .eq('id', player_session_id)
+     .select('id, player_flags, player_stats, player_inventory') // Wähle die aktualisierten Daten aus
+     .single();
+
+   if (updateSessionError) {
+     console.error('Error updating player session:', updateSessionError);
+     return new Response(JSON.stringify({ error: 'Could not update player session.' }), {
+       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+       status: 500
+     });
+   }
+
+   // 5. Antwort an das Frontend senden
+   return new Response(
+     JSON.stringify({
+       new_scene_id: nextSceneRecord.id,
+       scene_slug: nextSceneRecord.scene_slug,
+       scene_title: nextSceneRecord.title_for_admin, // oder text_for_player, je nach Bedarf
+       scene_text: nextSceneRecord.text_for_player,
+       image_url: nextSceneRecord.image_url,
+       music_url: nextSceneRecord.music_url,
+       choices: nextChoicesData,
+       updated_player_state: { // Sende den aktualisierten Spielerstatus zurück
+         flags: updatedSessionData?.player_flags || updatedPlayerFlags,
+         stats: updatedSessionData?.player_stats || sessionData.player_stats, // Behalte alte Stats, falls nicht geändert
+         inventory: updatedSessionData?.player_inventory || sessionData.player_inventory, // Behalte altes Inventar, falls nicht geändert
+       },
+     }),
+     { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+   );
+
+ } catch (error: any) {
+   console.error('Critical error in generate-next-scene function:', error);
+   return new Response(JSON.stringify({ error: error.message || 'An unexpected error occurred.' }), {
+     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+     status: 500
+   });
+ }
+});
+
+supabase/functions/create-player-session/index.ts
+// File: supabase/functions/create-player-session/index.ts
+
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { corsHeaders } from '../_shared/cors.ts';
+
+interface CreateSessionRequest {
+ player_id?: string; // Optional: Supabase auth.uid() des Spielers
+ start_scene_slug?: string; // Optional: Spezifischer Start-Szenen-Slug
+ character_id?: string; // Optional: Spezifische Charakter-ID für initiale Werte
+}
+
+// Haupt-Handler für die Edge Function
+serve(async (req: Request) => {
+ // Handle CORS preflight requests
+ if (req.method === 'OPTIONS') {
+   return new Response('ok', { headers: corsHeaders });
+ }
+
+ try {
+   const { player_id, start_scene_slug, character_id }: CreateSessionRequest = await req.json();
+
+   const supabaseClient = createClient(
+     Deno.env.get('SUPABASE_URL')!,
+     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')! // Service Role Key für Backend-Operationen
+   );
+
+   let effectiveStartSceneSlug = start_scene_slug;
+   let effectiveCharacterId = character_id;
+   let initialPlayerFlags = {};
+   let initialPlayerStats = {};
+   let initialPlayerInventory = [];
+
+   // Wenn keine spezifischen Startparameter gegeben sind, lade Standardwerte aus game_settings
+   if (!effectiveStartSceneSlug || !effectiveCharacterId) {
+     const { data: gameSettings, error: settingsError } = await supabaseClient
+       .from('game_settings')
+       .select('default_start_scene_slug, default_player_char_id')
+       .eq('setting_key', 'primary_settings')
+       .single();
+
+     if (settingsError || !gameSettings) {
+       console.warn('Could not load default game settings or settings not found:', settingsError?.message);
+       // Fahre fort, aber es könnten Fehler auftreten, wenn keine Startwerte vorhanden sind
+     } else {
+       if (!effectiveStartSceneSlug) {
+         effectiveStartSceneSlug = gameSettings.default_start_scene_slug;
+       }
+       if (!effectiveCharacterId) {
+         effectiveCharacterId = gameSettings.default_player_char_id;
+       }
+     }
+   }
+
+   if (!effectiveStartSceneSlug) {
+     return new Response(JSON.stringify({ error: 'Start scene slug could not be determined (neither provided nor found in default settings).' }), {
+       headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400
+     });
+   }
+
+   // Lade die Startszene
+   const { data: sceneData, error: sceneError } = await supabaseClient
+     .from('scenes')
+     .select('id, scene_slug, title_for_admin, text_for_player, image_url, music_url, choices(*, order_in_scene)') // Lade auch Choices für die Startszene
+     .eq('scene_slug', effectiveStartSceneSlug)
+     .single();
+
+   if (sceneError || !sceneData) {
+     console.error(`Error fetching start scene by slug '${effectiveStartSceneSlug}':`, sceneError);
+     return new Response(JSON.stringify({ error: `Start scene '${effectiveStartSceneSlug}' not found.` }), {
+       headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404
+     });
+   }
+
+   // Lade den Spielercharakter für initiale Werte (Flags, Stats, Inventar)
+   if (effectiveCharacterId) {
+     const { data: charData, error: charError } = await supabaseClient
+       .from('characters')
+       .select('initial_flags, initial_stats, initial_inventory')
+       .eq('id', effectiveCharacterId)
+       .single();
+
+     if (charError) {
+       console.warn(`Could not load character data for id '${effectiveCharacterId}':`, charError.message);
+       // Fahre fort, Spieler startet mit leeren Werten
+     } else if (charData) {
+       initialPlayerFlags = charData.initial_flags || {};
+       initialPlayerStats = charData.initial_stats || {};
+       initialPlayerInventory = charData.initial_inventory || [];
+     }
+   }
+
+   // Erstelle die Player Session in der Datenbank
+   const { data: sessionData, error: sessionInsertError } = await supabaseClient
+     .from('player_sessions')
+     .insert({
+       player_id: player_id || null, // Kann null sein für anonyme Sessions
+       current_scene_id: sceneData.id,
+       player_flags: initialPlayerFlags,
+       player_stats: initialPlayerStats,
+       player_inventory: initialPlayerInventory,
+       last_played_at: new Date().toISOString(),
+     })
+     .select() // Wähle die eingefügten Daten aus
+     .single();
+
+   if (sessionInsertError || !sessionData) {
+     console.error('Error creating player session:', sessionInsertError);
+     return new Response(JSON.stringify({ error: 'Could not create player session.' }), {
+       headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500
+     });
+   }
+
+   // Formatiere die Choices für die Antwort
+   const initialChoices = (sceneData.choices || [])
+       .sort((a: any,b: any) => (a.order_in_scene ?? 0) - (b.order_in_scene ?? 0))
+       .map((c: any) => ({ id: c.id, text: c.player_facing_text }));
+
+   // Antwort an das Frontend
+   return new Response(
+     JSON.stringify({
+       player_session_id: sessionData.id,
+       initial_scene: {
+         id: sceneData.id,
+         scene_slug: sceneData.scene_slug,
+         title: sceneData.title_for_admin, // oder text_for_player als Titel?
+         text: sceneData.text_for_player,
+         image_url: sceneData.image_url,
+         music_url: sceneData.music_url,
+         choices: initialChoices,
+       },
+       player_state: { // Sende den initialen Spielerstatus
+         flags: sessionData.player_flags,
+         stats: sessionData.player_stats,
+         inventory: sessionData.player_inventory,
+       }
+     }),
+     { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+   );
+
+ } catch (error: any) {
+   console.error('Critical error in create-player-session function:', error);
+   return new Response(JSON.stringify({ error: error.message || 'An unexpected error occurred.' }), {
+     headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500
+   });
+ }
+});
+
+C. React Frontend - Services, Styles, Typen & Context
+src/services/supabaseClient.ts
+// File: src/services/supabaseClient.ts
+import { createClient } from '@supabase/supabase-js';
+
+// Umgebungsvariablen aus .env.local (oder den Build-Einstellungen)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Überprüfung, ob die Umgebungsvariablen gesetzt sind
+if (!supabaseUrl || !supabaseAnonKey) {
+ console.error("Supabase URL oder Anon Key nicht konfiguriert.");
+ // In einer realen Anwendung könntest du hier eine deutlichere Fehlermeldung für den Benutzer anzeigen
+ // oder den Start der Anwendung verhindern.
+ throw new Error("Supabase URL oder Anon Key nicht konfiguriert. Bitte .env.local überprüfen oder Build-Variablen setzen.");
+}
+
+// Erstelle und exportiere den Supabase Client
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+src/styles/adminTheme.ts
+// File: src/styles/adminTheme.ts
+import { createTheme } from '@mui/material/styles';
+
+// Definiere das Admin-Theme
+export const adminTheme = createTheme({
+ palette: {
+   mode: 'light', // oder 'dark'
+   primary: {
+     main: '#00695c', // Ein sattes Grün, passend zum "Zauberbuch"
+     light: '#439889',
+     dark: '#003d33',
+   },
+   secondary: {
+     main: '#fdd835', // Ein warmes Gelb/Gold als Akzent
+     light: '#ffff6b',
+     dark: '#c6a700',
+   },
+   background: {
+     default: '#f0f2f5', // Ein heller, neutraler Hintergrund
+     paper: '#ffffff',   // Hintergrund für Paper-Elemente wie Karten
+   },
+   text: {
+     primary: '#263238',   // Dunkelgrau für primären Text
+     secondary: '#546e7a', // Helleres Grau für sekundären Text
+   },
+   error: {
+     main: '#d32f2f', // Standard MUI Rot für Fehler
+   },
+   warning: {
+       main: '#ffa000', // Standard MUI Orange für Warnungen
+   },
+   info: {
+       main: '#1976d2', // Standard MUI Blau für Informationen
+   },
+   success: {
+       main: '#388e3c', // Standard MUI Grün für Erfolgsmeldungen
+   },
+ },
+ typography: {
+   fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
+   h4: {
+     fontWeight: 600,
+     marginBottom: '1.2rem',
+     color: '#004d40', // Dunkleres Primärgrün für Überschriften
+   },
+   h5: {
+     fontWeight: 500,
+     marginBottom: '1rem',
+     color: '#004d40',
+   },
+   h6: {
+     fontWeight: 500,
+     color: '#263238',
+   },
+   button: {
+     textTransform: 'none', // Buttons ohne Großbuchstaben
+     fontWeight: 500,
+   }
+ },
+ components: {
+   MuiAppBar: {
+     defaultProps: {
+       elevation: 0, // Flachere AppBar
+       color: 'default', // Verwende nicht die Primärfarbe, um sie vom Inhalt abzuheben
+     },
+     styleOverrides: {
+       root: ({ theme }) => ({
+           backgroundColor: theme.palette.background.paper, // Heller Hintergrund für AppBar
+           borderBottom: `1px solid ${theme.palette.divider}`,
+       }),
+     },
+   },
+   MuiDrawer: {
+       styleOverrides: {
+           paper: ({ theme }) => ({
+               backgroundColor: theme.palette.background.paper, // Konsistenter Hintergrund für Drawer
+               borderRight: `1px solid ${theme.palette.divider}`,
+           })
+       }
+   },
+   MuiListItemButton: {
+     styleOverrides: {
+       root: ({ theme }) => ({
+         '&.Mui-selected': {
+           backgroundColor: theme.palette.action.selected, // Deutlichere Auswahlfarbe
+           borderRight: `4px solid ${theme.palette.primary.main}`,
+           '& .MuiListItemIcon-root, & .MuiListItemText-primary': {
+             color: theme.palette.primary.dark, // Dunklere Primärfarbe für ausgewählte Icons/Text
+             fontWeight: 600,
+           },
+         },
+         '&:hover': {
+           backgroundColor: theme.palette.action.hover,
+         },
+       }),
+     },
+   },
+   MuiPaper: {
+     defaultProps: {
+       elevation: 1, // Leichte Erhebung für Paper-Elemente
+     },
+     styleOverrides: {
+       root: {
+         borderRadius: '8px', // Abgerundete Ecken für Paper
+       },
+     },
+   },
+   MuiButton: {
+       styleOverrides: {
+           root: {
+               borderRadius: '8px', // Abgerundete Ecken für Buttons
+           },
+           containedPrimary: ({ theme }) => ({
+               '&:hover': {
+                   backgroundColor: theme.palette.primary.dark,
+               }
+           })
+       }
+   },
+   MuiTextField: {
+       defaultProps: {
+           variant: 'outlined', // Standardmäßig Outlined-Textfelder
+           size: 'small',
+       }
+   },
+   MuiTableCell: {
+       styleOverrides: {
+           head: ({ theme }) => ({
+               backgroundColor: theme.palette.grey[100], // Heller Hintergrund für Tabellenköpfe
+               fontWeight: 'bold',
+           })
+       }
+   }
+ },
+});
+
+src/types/authTypes.ts
+// File: src/types/authTypes.ts
+import type { User as SupabaseUser, Session as SupabaseSession } from '@supabase/supabase-js';
+
+export type User = SupabaseUser;
+export type Session = SupabaseSession;
+
+src/types/gameTypes.ts
+// File: src/types/gameTypes.ts
+
+export interface GameSettings {
+ id?: string; // Optional, da es von der DB generiert wird
+ setting_key: string;
+ main_plot_outline_for_ai?: string | null;
+ global_tone_style_for_ai?: string | null;
+ default_player_char_id?: string | null;
+ default_start_scene_slug?: string | null;
+ ai_model_preference?: string | null;
+ global_ai_params?: Record<string, any> | null;
+ created_at?: string; // Wird von der DB gesetzt
+ updated_at?: string; // Wird von der DB gesetzt
+}
+
+export interface CharacterData {
+ id?: string;
+ character_slug: string;
+ name: string;
+ is_player_character: boolean;
+ description_for_ai?: string | null;
+ initial_stats?: Record<string, any> | null;
+ initial_inventory?: any[] | null; // Array von Item-Objekten oder IDs
+ initial_flags?: Record<string, any> | null;
+ avatar_url?: string | null;
+ created_at?: string;
+ updated_at?: string;
+}
+
+export interface ChoiceData {
+ id?: string; // Echte ID aus der DB, optional beim Erstellen
+ temp_id?: string; // Temporäre ID für React-Keys im Editor
+ scene_id?: string; // Wird beim Speichern serverseitig gesetzt
+ order_in_scene: number;
+ player_facing_text: string;
+ ai_prompt_modifier_for_next?: string | null;
+ leads_to_specific_scene_slug?: string | null;
+ einfluss_level?: 'niedrig' | 'mittel' | 'hoch' | null;
+ flags_to_set?: Record<string, any> | null;
+ required_flags?: Record<string, any> | null;
+ created_at?: string;
+ updated_at?: string;
+}
+
+export interface SceneData {
+ id?: string;
+ scene_slug: string;
+ title_for_admin?: string | null;
+ text_for_player?: string | null;
+ image_url?: string | null;
+ music_url?: string | null;
+ context_description_for_ai?: string | null;
+ initial_prompt_for_ai?: string | null;
+ is_ai_generated: boolean;
+ choices: ChoiceData[]; // Wichtig: Array von ChoiceData
+ tags?: string[] | null; // Tags für die Szene
+ created_at?: string;
+ updated_at?: string;
+ choices_count?: number; // Wird für die Listenansicht verwendet
+}
+
+export interface FlagDefinitionData {
+ id?: string;
+ flag_name: string;
+ flag_type: 'BOOLEAN' | 'NUMBER' | 'STRING';
+ default_value?: string | null;
+ description?: string | null;
+ created_at?: string;
+ updated_at?: string;
+}
+
+export interface PlayerSessionData {
+ id: string; // Immer vorhanden, da es eine existierende Session ist
+ player_id?: string | null; // Supabase auth.users ID
+ current_scene_id?: string | null;
+ player_flags: Record<string, any>;
+ player_stats: Record<string, any>;
+ player_inventory: any[];
+ last_played_at: string;
+ created_at?: string;
+ updated_at?: string;
+ current_scene?: SceneData | null; // Optional eingebettete aktuelle Szene
+}
+
+// Typen für das Spiel-Frontend (vereinfachte Versionen für die Anzeige)
+export interface GameChoice { // Wird im PlayPage verwendet
+ id: string;
+ text: string;
+}
+
+export interface GameScene { // Wird im PlayPage verwendet
+ id: string;
+ slug: string;
+ title?: string | null;
+ text: string;
+ imageUrl?: string | null;
+ musicUrl?: string | null;
+ choices: GameChoice[];
+}
+
+export interface PlayerState { // Wird im PlayPage und in Function Responses verwendet
+ flags: Record<string, any>;
+ stats: Record<string, any>;
+ inventory: any[];
+}
+
+// Typen für die Antworten der Edge Functions
+export interface NextSceneResponse {
+ new_scene_id: string;
+ scene_slug: string;
+ scene_title?: string | null;
+ scene_text: string;
+ image_url?: string | null;
+ music_url?: string | null;
+ choices: GameChoice[];
+ updated_player_state: PlayerState;
+}
+
+export interface CreateSessionResponse {
+   player_session_id: string;
+   initial_scene: GameScene; // Enthält bereits GameChoice[]
+   player_state: PlayerState;
+}
+
+// Für die Szenenliste im Admin-Panel (SceneListEntry)
+export interface SceneListEntry extends Pick<SceneData, 'id' | 'scene_slug' | 'title_for_admin' | 'updated_at' | 'tags'> {
+   choices_count: number; // Wird durch einen Join oder Subquery ermittelt
+}
+
+src/context/AuthContext.tsx
+// File: src/context/AuthContext.tsx
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { supabase } from '../services/supabaseClient';
+import type { User, Session } from '../types/authTypes'; // Stellen Sie sicher, dass diese Typen existieren
+
+interface AuthContextType {
+ user: User | null;
+ session: Session | null;
+ isLoading: boolean;
+ isAdmin: boolean; // Beispiel für eine Admin-Rolle
+ signOut: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+interface AuthProviderProps {
+ children: ReactNode;
+}
+
+export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+ const [user, setUser] = useState<User | null>(null);
+ const [session, setSession] = useState<Session | null>(null);
+ const [isLoading, setIsLoading] = useState(true);
+ const [isAdmin, setIsAdmin] = useState(false);
+
+ useEffect(() => {
+   let mounted = true; // Verhindert State-Updates, wenn die Komponente unmounted ist
+
+   const fetchSession = async () => {
+     if (!mounted) return;
+     setIsLoading(true);
+     const { data: { session: currentSession }, error } = await supabase.auth.getSession();
+
+     if (error) {
+       console.error("Error fetching session:", error.message);
+     }
+
+     if (mounted) {
+       setSession(currentSession);
+       setUser(currentSession?.user ?? null);
+       // Beispielhafte Admin-Prüfung (in einer echten App sicherer gestalten, z.B. über Custom Claims oder eine separate Admin-Tabelle)
+       // Ersetzen Sie 'admin@example.com' durch Ihre tatsächliche Admin-Logik oder E-Mail.
+       // Für den privaten Gebrauch ist dies vorerst ausreichend.
+       setIsAdmin(currentSession?.user?.email === 'admin@example.com'); // TODO: Durch echte Admin-Logik ersetzen
+       setIsLoading(false);
+     }
+   };
+
+   fetchSession();
+
+   const { data: authListener } = supabase.auth.onAuthStateChange(
+     async (_event, newSession) => {
+       if (mounted) {
+         setSession(newSession);
+         setUser(newSession?.user ?? null);
+         // Aktualisieren Sie den Admin-Status auch hier
+         setIsAdmin(newSession?.user?.email === 'admin@example.com'); // TODO: Durch echte Admin-Logik ersetzen
+         if (isLoading) setIsLoading(false); // Setze isLoading nur beim ersten Mal oder wenn es noch true ist
+       }
+     }
+   );
+
+   return () => {
+     mounted = false;
+     authListener?.subscription?.unsubscribe();
+   };
+ }, []); // Keine Abhängigkeiten, da der Listener alles abdeckt und fetchSession nur initial läuft
+
+ const signOut = async () => {
+   setIsLoading(true); // Optional: Ladezustand während des Ausloggens anzeigen
+   await supabase.auth.signOut();
+   // User, Session und isAdmin werden durch den onAuthStateChange Listener automatisch zurückgesetzt.
+ };
+
+ const value = {
+   user,
+   session,
+   isLoading,
+   isAdmin,
+   signOut,
+ };
+
+ return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
+
+export const useAuth = (): AuthContextType => {
+ const context = useContext(AuthContext);
+ if (context === undefined) {
+   throw new Error('useAuth must be used within an AuthProvider');
+ }
+ return context;
+};
+
+src/context/NotificationContext.tsx
+// File: src/context/NotificationContext.tsx
+import React, { createContext, useContext, ReactNode } from 'react';
+import { useSnackbar, VariantType, SnackbarKey } from 'notistack';
+
+interface NotificationContextType {
+ showToast: (message: string, variant?: VariantType) => SnackbarKey;
+}
+
+const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
+
+interface NotificationProviderProps {
+ children: ReactNode;
+}
+
+export const NotificationProvider: React.FC<NotificationProviderProps> = ({ children }) => {
+ const { enqueueSnackbar } = useSnackbar();
+
+ const showToast = (message: string, variant: VariantType = 'default'): SnackbarKey => {
+   // Ruft enqueueSnackbar von notistack auf, um eine Benachrichtigung anzuzeigen.
+   // message: Der Text, der in der Benachrichtigung angezeigt wird.
+   // variant: Der Typ der Benachrichtigung ('default', 'error', 'success', 'warning', 'info').
+   return enqueueSnackbar(message, { variant });
+ };
+
+ return (
+   <NotificationContext.Provider value={{ showToast }}>
+     {children}
+   </NotificationContext.Provider>
+ );
+};
+
+export const useNotification = (): NotificationContextType => {
+ const context = useContext(NotificationContext);
+ if (!context) {
+   // Dieser Fehler wird ausgelöst, wenn useNotification außerhalb eines NotificationProvider
+   // und des von notistack bereitgestellten SnackbarProvider verwendet wird.
+   throw new Error('useNotification must be used within a NotificationProvider and SnackbarProvider');
+ }
+ return context;
+};
+
+D. React Frontend - Hauptkomponenten & Routing
+src/main.tsx
+// File: src/main.tsx
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
+import { ThemeProvider, CssBaseline } from '@mui/material';
+import { SnackbarProvider } from 'notistack'; // Importiere SnackbarProvider für Benachrichtigungen
+
+import App from './App.tsx';
+import { adminTheme } from './styles/adminTheme.ts'; // Dein benutzerdefiniertes Theme
+import { AuthProvider } from './context/AuthContext.tsx'; // Auth-Context Provider
+import { NotificationProvider } from './context/NotificationContext.tsx'; // Notification-Context Provider
+
+// Stelle sicher, dass das Wurzelelement im HTML existiert (normalerweise <div id="root"></div> in index.html)
+const rootElement = document.getElementById('root');
+
+if (!rootElement) {
+ throw new Error("Root element with ID 'root' not found in the document. Please ensure it exists in your index.html.");
+}
+
+ReactDOM.createRoot(rootElement).render(
+ <React.StrictMode>
+   <BrowserRouter> {/* Ermöglicht client-seitiges Routing */}
+     <ThemeProvider theme={adminTheme}> {/* Wendet dein benutzerdefiniertes Material UI Theme an */}
+       <CssBaseline /> {/* Setzt grundlegende CSS-Normalisierungen */}
+       <SnackbarProvider
+           maxSnack={5} // Maximale Anzahl gleichzeitig angezeigter Benachrichtigungen
+           anchorOrigin={{
+               vertical: 'bottom',
+               horizontal: 'right',
+           }}
+           autoHideDuration={4000} // Standard-Anzeigedauer für Benachrichtigungen in Millisekunden
+       >
+         <NotificationProvider> {/* Stellt die showToast-Funktion bereit */}
+           <AuthProvider> {/* Stellt Authentifizierungsinformationen und -funktionen bereit */}
+             <App /> {/* Deine Hauptanwendungskomponente */}
+           </AuthProvider>
+         </NotificationProvider>
+       </SnackbarProvider>
+     </ThemeProvider>
+   </BrowserRouter>
+ </React.StrictMode>
+);
+
+src/App.tsx
+// File: src/App.tsx
+import React, { Suspense } from 'react';
+import { Routes, Route, Navigate, Link as RouterLink } from 'react-router-dom';
+import { Box, CircularProgress, Typography, Paper, Button as MuiButton } from '@mui/material';
+
+// Layouts
+// ProtectedAdminRoute stellt sicher, dass nur eingeloggte Admins auf die Admin-Seiten zugreifen können.
+// Es beinhaltet auch das AdminLayout.
+import ProtectedAdminRoute from './layout/ProtectedAdminRoute.tsx';
+
+// Seiten (Lazy Loading für bessere Performance beim ersten Laden der App)
+// Die Komponenten werden erst geladen, wenn sie tatsächlich benötigt werden.
+const LoginPage = React.lazy(() => import('./pages/LoginPage.tsx'));
+const DashboardPage = React.lazy(() => import('./pages/admin/DashboardPage.tsx'));
+const SceneListPage = React.lazy(() => import('./pages/admin/scenes/SceneListPage.tsx'));
+const EditScenePage = React.lazy(() => import('./pages/admin/scenes/EditScenePage.tsx'));
+// const CharacterListPage = React.lazy(() => import('./pages/admin/characters/CharacterListPage.tsx')); // Auskommentiert, da noch nicht erstellt
+// const EditCharacterPage = React.lazy(() => import('./pages/admin/characters/EditCharacterPage.tsx')); // Auskommentiert
+// const FlagsManagementPage = React.lazy(() => import('./pages/admin/FlagsManagementPage.tsx')); // Auskommentiert
+// const SettingsPage = React.lazy(() => import('./pages/admin/SettingsPage.tsx')); // Auskommentiert
+// const PreviewPage = React.lazy(() => import('./pages/admin/PreviewPage.tsx')); // Auskommentiert
+
+const StartPage = React.lazy(() => import('./pages/game/StartPage.tsx'));
+const PlayPage = React.lazy(() => import('./pages/game/PlayPage.tsx'));
+
+// Fallback-Komponente, die während des Ladens von Lazy-Komponenten angezeigt wird.
+const LoadingFallback: React.FC = () => (
+ <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', p: 2, backgroundColor: 'background.default' }}>
+   <CircularProgress />
+   <Typography sx={{ ml: 2 }}>Lade...</Typography>
+ </Box>
+);
+
+// Einfache Landing Page Komponente
+const LandingPageContent: React.FC = () => (
+   <Box
+       sx={{
+           display: 'flex',
+           flexDirection: 'column',
+           justifyContent: 'center',
+           alignItems: 'center',
+           minHeight: '100vh',
+           textAlign: 'center',
+           p: 2,
+           // Hintergrund mit Farbverlauf und Textur (optional)
+           background: 'url("https://www.transparenttextures.com/patterns/stardust.png"), linear-gradient(to bottom, #1F2937, #111827)', // Dunkles Weltraum-Thema
+           color: 'white', // Heller Text für Kontrast
+       }}
+   >
+       <Paper
+           elevation={12} // Stärkerer Schatten für mehr Tiefe
+           sx={{
+               p: { xs: 3, sm: 6 },
+               borderRadius: '16px', // Stärker abgerundete Ecken
+               backgroundColor: 'rgba(17, 24, 39, 0.85)', // Dunkler, leicht transparenter Hintergrund
+               backdropFilter: 'blur(10px)', // Stärkerer Blur-Effekt
+               maxWidth: '700px', // Etwas breiter für mehr Inhalt
+               border: '1px solid rgba(255, 255, 255, 0.1)', // Dezenter Rand
+           }}
+       >
+           <Typography variant="h2" component="h1" gutterBottom sx={{ fontFamily: '"Cinzel", serif', fontWeight: 700, color: '#FBBF24' /* Goldähnliche Farbe */, textShadow: '2px 2px 4px rgba(0,0,0,0.5)' }}>
+               Das Magische Zauberbuch
+           </Typography>
+           <Typography variant="h5" sx={{ mb: 5, fontFamily: '"Quintessential", serif', fontStyle: 'italic', color: '#D1D5DB' /* Helles Grau */ }}>
+               Ein Abenteuer, geschrieben von den Winden des Schicksals... und einer Prise KI!
+           </Typography>
+           <MuiButton
+               component={RouterLink}
+               to="/play/start"
+               variant="contained"
+               color="secondary" // Nutzt die Sekundärfarbe aus dem Theme (Gelb/Gold)
+               size="large"
+               sx={{
+                   fontFamily: '"MedievalSharp", cursive',
+                   fontSize: '1.4rem', // Größere Schrift
+                   px: 7, // Mehr Padding horizontal
+                   py: 2,  // Mehr Padding vertikal
+                   borderRadius: '8px', // Abgerundete Ecken
+                   boxShadow: '0px 8px 15px rgba(0,0,0,0.3)', // Stärkerer Schatten
+                   transition: 'transform 0.2s ease-in-out, background-color 0.2s',
+                   '&:hover': {
+                       backgroundColor: '#F59E0B', // Dunkleres Gold beim Hover
+                       transform: 'scale(1.05)', // Leichter Zoom-Effekt
+                   }
+               }}
+           >
+               Abenteuer beginnen
+           </MuiButton>
+           <MuiButton
+               component={RouterLink}
+               to="/admin"
+               variant="outlined"
+               size="medium"
+               sx={{
+                   mt: 5, // Mehr Abstand nach oben
+                   display: 'block',
+                   mx: 'auto',
+                   fontFamily: '"Roboto", sans-serif',
+                   borderColor: 'rgba(251, 191, 36, 0.6)', // Goldener Rand
+                   color: 'rgba(251, 191, 36, 0.9)', // Goldener Text
+                   '&:hover': {
+                       borderColor: '#FBBF24',
+                       backgroundColor: 'rgba(251, 191, 36, 0.1)'
+                   }
+               }}
+           >
+               Zum Admin Panel
+           </MuiButton>
+       </Paper>
+   </Box>
+);
+
+
+function App() {
+ return (
+   // Suspense wird für das Lazy Loading der Routen-Komponenten benötigt.
+   // Es zeigt den LoadingFallback an, während eine Komponente geladen wird.
+   <Suspense fallback={<LoadingFallback />}>
+     <Routes>
+       {/* Öffentliche Routen */}
+       <Route path="/login" element={<LoginPage />} />
+       <Route path="/" element={<LandingPageContent />} /> {/* Startseite */}
+
+       {/* Spiel-Routen */}
+       <Route path="/play/start" element={<StartPage />} />
+       <Route path="/play/session/:sessionId" element={<PlayPage />} />
+
+       {/* Admin-Routen, geschützt durch ProtectedAdminRoute */}
+       {/* ProtectedAdminRoute beinhaltet das AdminLayout */}
+       <Route path="/admin" element={<ProtectedAdminRoute />}>
+         {/* Index-Route für /admin, leitet standardmäßig zum Dashboard weiter */}
+         <Route index element={<Navigate to="dashboard" replace />} />
+         <Route path="dashboard" element={<DashboardPage />} />
+         <Route path="scenes" element={<SceneListPage />} />
+         <Route path="scenes/new" element={<EditScenePage />} /> {/* Route zum Erstellen einer neuen Szene */}
+         <Route path="scenes/edit/:sceneId" element={<EditScenePage />} /> {/* Route zum Bearbeiten einer bestehenden Szene */}
+
+         {/* Auskommentierte Routen für zukünftige Erweiterungen: */}
+         {/*
+         <Route path="characters" element={<CharacterListPage />} />
+         <Route path="characters/new" element={<EditCharacterPage />} />
+         <Route path="characters/edit/:characterId" element={<EditCharacterPage />} />
+         <Route path="flags" element={<FlagsManagementPage />} />
+         <Route path="settings" element={<SettingsPage />} />
+         <Route path="preview" element={<PreviewPage />} />
+         */}
+       </Route>
+
+       {/* Fallback-Route für nicht gefundene Pfade, leitet zur Startseite weiter */}
+       <Route path="*" element={<Navigate to="/" replace />} />
+     </Routes>
+   </Suspense>
+ );
+}
+
+export default App;
+
+E. React Frontend - Layout-Komponenten
+src/layout/ProtectedAdminRoute.tsx
+// File: src/layout/ProtectedAdminRoute.tsx
+import React from 'react';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Box, CircularProgress, Typography, Paper, Button } from '@mui/material';
+import { useAuth } from '../context/AuthContext'; // Hook zur Überprüfung des Authentifizierungsstatus
+import AdminLayout from './AdminLayout'; // Das Layout für den Admin-Bereich
+import { supabase } from '../services/supabaseClient'; // Für den Logout-Fall
+
+const ProtectedAdminRoute: React.FC = () => {
+ const { user, session, isLoading, isAdmin } = useAuth(); // Holt Authentifizierungsdaten und Admin-Status
+ const location = useLocation(); // Aktueller Pfad, um nach dem Login dorthin zurückzukehren
+ const navigate = useNavigate(); // Für die Navigation nach dem Logout
+
+ // Zeige einen Ladeindikator, während der Authentifizierungsstatus geprüft wird.
+ if (isLoading) {
+   return (
+     <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', flexDirection: 'column', p: 2, backgroundColor: 'background.default' }}>
+       <CircularProgress />
+       <Typography sx={{ mt: 2 }}>Lade Authentifizierung...</Typography>
+     </Box>
+   );
+ }
+
+ // Wenn der Benutzer nicht angemeldet ist (kein User-Objekt oder keine Session)
+ // leite zur Login-Seite weiter.
+ // Speichere den aktuellen Pfad (location.pathname), damit der Benutzer nach erfolgreichem Login
+ // dorthin zurückgeleitet werden kann.
+ if (!user || !session) {
+   return <Navigate to="/login" state={{ from: location }} replace />;
+ }
+
+ // Wenn der Benutzer angemeldet ist, aber nicht die Admin-Rolle hat.
+ if (!isAdmin) {
+   return (
+     <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', p: 3, backgroundColor: 'background.default' }}>
+       <Paper elevation={3} sx={{ p: 4, textAlign: 'center', borderRadius: '8px' }}>
+         <Typography variant="h5" gutterBottom color="error.main">
+           Zugriff verweigert
+         </Typography>
+         <Typography variant="body1" sx={{ mb: 3 }}>
+           Sie haben keine Berechtigung, auf diesen Bereich zuzugreifen.
+           Bitte melden Sie sich mit einem Administratorkonto an.
+         </Typography>
+         <Button
+           variant="contained"
+           onClick={() => supabase.auth.signOut().then(() => navigate('/login', { replace: true, state: { from: location } }))}
+         >
+           Abmelden und als Admin einloggen
+         </Button>
+       </Paper>
+     </Box>
+   );
+ }
+
+ // Wenn der Benutzer angemeldet und ein Admin ist, rendere das AdminLayout
+ // und die Kind-Routen (definiert in App.tsx) über das <Outlet />.
+ return (
+   <AdminLayout>
+     <Outlet />
+   </AdminLayout>
+ );
+};
+
+export default ProtectedAdminRoute;
+
+src/layout/AdminLayout.tsx
+// File: src/layout/AdminLayout.tsx
+import React, { useState, ReactNode } from 'react';
+import { useNavigate, Link as RouterLink, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext'; // Für Logout-Funktion und Benutzerinfos
+import {
+ AppBar, Box, CssBaseline, Divider, Drawer, IconButton, List, ListItem,
+ ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography, Tooltip, Avatar, Stack,
+ useTheme, useMediaQuery
+} from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu'; // Icon für mobiles Menü
+import LogoutIcon from '@mui/icons-material/Logout';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import MovieIcon from '@mui/icons-material/Movie'; // Icon für Szenen
+// import PeopleIcon from '@mui/icons-material/People'; // Icon für Charaktere (auskommentiert)
+// import FlagIcon from '@mui/icons-material/Flag'; // Icon für Flags (auskommentiert)
+// import SettingsIcon from '@mui/icons-material/Settings'; // Icon für Einstellungen (auskommentiert)
+// import PlayArrowIcon from '@mui/icons-material/PlayArrow'; // Icon für Vorschau (auskommentiert)
+import AccountCircleIcon from '@mui/icons-material/AccountCircle'; // Standard Avatar Icon
+import BookIcon from '@mui/icons-material/Book'; // Passenderes Icon für "Zauberbuch"
+
+const drawerWidth = 260; // Breite der Sidebar
+
+interface AdminLayoutProps {
+ children: ReactNode; // Die Kind-Komponenten, die im Hauptbereich angezeigt werden
+}
+
+const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
+ const [mobileOpen, setMobileOpen] = useState(false); // Zustand für mobile Sidebar-Sichtbarkeit
+ const navigate = useNavigate();
+ const location = useLocation(); // Um den aktiven Menüpunkt hervorzuheben
+ const { user, signOut } = useAuth(); // Holt Benutzerinformationen und Logout-Funktion
+ const theme = useTheme();
+ const isMobile = useMediaQuery(theme.breakpoints.down('sm')); // Prüft, ob es sich um eine mobile Ansicht handelt
+
+ const handleDrawerToggle = () => {
+   setMobileOpen(!mobileOpen);
+ };
+
+ const handleLogout = async () => {
+   await signOut();
+   navigate('/login'); // Nach dem Logout zur Login-Seite navigieren
+ };
+
+ // Definition der Menüpunkte für die Sidebar
+ const menuItems = [
+   { text: 'Dashboard', icon: <DashboardIcon />, path: '/admin/dashboard' },
+   { text: 'Szenen', icon: <MovieIcon />, path: '/admin/scenes' },
+   // { text: 'Charaktere', icon: <PeopleIcon />, path: '/admin/characters' }, // Zukünftige Erweiterung
+   // { text: 'Flags & Variablen', icon: <FlagIcon />, path: '/admin/flags' }, // Zukünftige Erweiterung
+   // { text: 'Einstellungen', icon: <SettingsIcon />, path: '/admin/settings' }, // Zukünftige Erweiterung
+   // { text: 'Vorschau', icon: <PlayArrowIcon />, path: '/admin/preview' }, // Zukünftige Erweiterung
+ ];
+
+ const drawerContent = (
+   <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+     <Toolbar
+       sx={{
+         display: 'flex',
+         alignItems: 'center',
+         justifyContent: 'center',
+         px: [1],
+         // Hintergrund und Farbe aus dem Theme verwenden
+         backgroundColor: theme.palette.primary.dark, // Dunklerer Primärfarbton für den Header der Sidebar
+         color: theme.palette.primary.contrastText, // Kontrasttextfarbe
+       }}
+     >
+       <Stack direction="row" alignItems="center" spacing={1.5}>
+           <BookIcon sx={{fontSize: '2rem'}}/>
+           <Typography variant="h6" noWrap component="div" sx={{ fontFamily: '"Cinzel", serif', fontWeight: 'bold' }}>
+           Zauberbuch
+           </Typography>
+       </Stack>
+     </Toolbar>
+     <Divider />
+     <List sx={{ flexGrow: 1, pt: 1 }}> {/* Padding oben für die Liste */}
+       {menuItems.map((item) => (
+         <ListItem key={item.text} disablePadding sx={{ display: 'block' }}>
+           <ListItemButton
+             selected={location.pathname.startsWith(item.path)} // Aktiven Pfad hervorheben
+             onClick={() => {
+               navigate(item.path);
+               if (isMobile) handleDrawerToggle(); // Schließe die mobile Sidebar nach Klick
+             }}
+             sx={{
+               minHeight: 48,
+               justifyContent: 'initial',
+               px: 2.5,
+               mb: 0.5, // Kleiner Abstand zwischen den Items
+               borderRadius: '4px', // Abgerundete Ecken für den Button
+               margin: '0 8px', // Horizontaler Margin für den Button
+               '&.Mui-selected': {
+                 // Stile für ausgewählten Button werden vom Theme (adminTheme.ts) übernommen
+               },
+               '&:hover': {
+                 // Stile für Hover werden vom Theme (adminTheme.ts) übernommen
+               }
+             }}
+           >
+             <ListItemIcon
+               sx={{
+                 minWidth: 0,
+                 mr: 3, // Abstand zwischen Icon und Text
+                 justifyContent: 'center',
+                 color: location.pathname.startsWith(item.path) ? theme.palette.primary.dark : 'inherit', // Iconfarbe an Auswahl anpassen
+               }}
+             >
+               {item.icon}
+             </ListItemIcon>
+             <ListItemText primary={item.text} sx={{ opacity: 1 }} />
+           </ListItemButton>
+         </ListItem>
+       ))}
+     </List>
+     <Divider />
+     <List sx={{pb: 1, pt:0}}> {/* Padding unten für Logout Button */}
+       <ListItem disablePadding sx={{ display: 'block' }}>
+         <ListItemButton
+           onClick={handleLogout}
+           sx={{
+             minHeight: 48,
+             justifyContent: 'initial',
+             px: 2.5,
+             borderRadius: '4px',
+             margin: '0 8px',
+           }}
+         >
+           <ListItemIcon
+             sx={{
+               minWidth: 0,
+               mr: 3,
+               justifyContent: 'center',
+             }}
+           >
+             <LogoutIcon />
+           </ListItemIcon>
+           <ListItemText primary="Logout" />
+         </ListItemButton>
+       </ListItem>
+     </List>
+   </Box>
+ );
+
+ return (
+   <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+     <CssBaseline /> {/* Stellt sicher, dass grundlegende CSS-Stile angewendet werden */}
+     <AppBar
+       position="fixed"
+       elevation={0} // Flache AppBar, wie im Theme definiert
+       sx={{
+         width: { sm: `calc(100% - ${drawerWidth}px)` }, // Breite der AppBar auf Desktop
+         ml: { sm: `${drawerWidth}px` }, // Margin links auf Desktop, um Platz für die Sidebar zu machen
+       }}
+     >
+       <Toolbar>
+         <IconButton
+           color="inherit"
+           aria-label="Menü öffnen"
+           edge="start"
+           onClick={handleDrawerToggle}
+           sx={{
+             mr: 2,
+             display: { sm: 'none' }, // Nur auf mobilen Geräten anzeigen
+             color: theme.palette.text.primary // Icon-Farbe an Textfarbe anpassen für Kontrast zur AppBar
+           }}
+         >
+           <MenuIcon />
+         </IconButton>
+         <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1, color: theme.palette.text.primary }}>
+           Admin Panel {/* Titel der aktuellen Seite könnte hier dynamisch sein */}
+         </Typography>
+         {user && ( // Zeige Benutzerinformationen, wenn vorhanden
+           <Tooltip title={user.email || 'Benutzer'}>
+             <Avatar sx={{ bgcolor: theme.palette.secondary.main, width: 32, height: 32, color: theme.palette.secondary.contrastText }}>
+               {/* Zeige Initialen oder ein Standardicon */}
+               {user.email ? user.email.charAt(0).toUpperCase() : <AccountCircleIcon />}
+             </Avatar>
+           </Tooltip>
+         )}
+       </Toolbar>
+     </AppBar>
+     <Box
+       component="nav"
+       sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 } }}
+       aria-label="Admin Navigation"
+     >
+       {/* Mobile Sidebar */}
+       <Drawer
+         variant="temporary"
+         open={mobileOpen}
+         onClose={handleDrawerToggle}
+         ModalProps={{
+           keepMounted: true, // Bessere Performance auf mobilen Geräten
+         }}
+         sx={{
+           display: { xs: 'block', sm: 'none' },
+           '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
+         }}
+       >
+         {drawerContent}
+       </Drawer>
+       {/* Desktop Sidebar */}
+       <Drawer
+         variant="permanent"
+         sx={{
+           display: { xs: 'none', sm: 'block' },
+           '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
+         }}
+         open // Permanent offen auf Desktop
+       >
+         {drawerContent}
+       </Drawer>
+     </Box>
+     <Box
+       component="main" // Hauptinhaltsbereich
+       sx={{
+         flexGrow: 1,
+         p: { xs: 2, md: 3 }, // Padding für den Inhaltsbereich
+         width: { sm: `calc(100% - ${drawerWidth}px)` }, // Breite des Inhaltsbereichs auf Desktop
+         backgroundColor: theme.palette.background.default, // Hintergrundfarbe aus dem Theme
+         mt: '64px', // Platz für die AppBar (Standardhöhe)
+         overflowY: 'auto' // Scrollen erlauben, falls Inhalt länger ist
+       }}
+     >
+       {children} {/* Hier werden die spezifischen Admin-Seiten gerendert */}
+     </Box>
+   </Box>
+ );
+};
+
+export default AdminLayout;
+
+F. React Frontend - Admin-Seiten & Komponenten
+src/pages/LoginPage.tsx
+// File: src/pages/LoginPage.tsx
+import React, { useState, FormEvent, useEffect } from 'react';
+import { useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { supabase } from '../services/supabaseClient'; // Supabase Client für die Authentifizierung
+import { useAuth } from '../context/AuthContext'; // Auth-Context für Benutzerinformationen
+import {
+ Container, Box, Typography, TextField, Button, CircularProgress, Paper, Alert
+} from '@mui/material';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined'; // Icon für das Login-Formular
+import Avatar from '@mui/material/Avatar';
+import { useNotification } from '../context/NotificationContext'; // Für Toast-Benachrichtigungen
+
+const LoginPage: React.FC = () => {
+ const [email, setEmail] = useState('');
+ const [password, setPassword] = useState('');
+ const [isLoading, setIsLoading] = useState(false);
+ const { showToast } = useNotification(); // Hook für Benachrichtigungen
+ const navigate = useNavigate();
+ const location = useLocation();
+ const { session, isLoading: authIsLoading, isAdmin } = useAuth(); // Auth-Status und Ladezustand
+
+ // Ziel-URL nach erfolgreichem Login, standardmäßig das Admin-Dashboard
+ const from = (location.state as any)?.from?.pathname || "/admin/dashboard";
+
+ // Effekt, der prüft, ob der Benutzer bereits eingeloggt ist und ggf. weiterleitet
+ useEffect(() => {
+   if (!authIsLoading && session && isAdmin) { // Nur weiterleiten, wenn Admin
+     navigate(from, { replace: true });
+   } else if (!authIsLoading && session && !isAdmin) {
+       // Wenn eingeloggt, aber kein Admin, zeige eine Meldung und leite ggf. woanders hin oder logge aus
+       showToast("Sie sind nicht als Administrator angemeldet.", "warning");
+       supabase.auth.signOut(); // Automatisch ausloggen, wenn kein Admin
+   }
+ }, [session, authIsLoading, isAdmin, navigate, from, showToast]);
+
+ const handleLogin = async (e: FormEvent) => {
+   e.preventDefault();
+   setIsLoading(true);
+
+   try {
+     const { error: signInError } = await supabase.auth.signInWithPassword({
+       email,
+       password,
+     });
+
+     if (signInError) {
+       throw signInError;
+     }
+     showToast('Erfolgreich angemeldet!', 'success');
+     // Die Navigation erfolgt durch den useEffect oben, sobald der AuthContext aktualisiert ist.
+   } catch (err: any) {
+     console.error("Login Fehler:", err);
+     showToast(err.message || "Login fehlgeschlagen. Überprüfen Sie Ihre Zugangsdaten.", 'error');
+   } finally {
+     setIsLoading(false);
+   }
+ };
+
+ // Zeige Ladeindikator, während der Auth-Status initial geprüft wird
+ if (authIsLoading) {
+   return (
+     <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', flexDirection: 'column' }}>
+       <CircularProgress />
+       <Typography sx={{ mt: 2 }}>Authentifizierung wird geladen...</Typography>
+     </Box>
+   );
+ }
+
+ // Wenn bereits eine gültige Admin-Session besteht, direkt weiterleiten (wird auch vom useEffect gehandhabt)
+ if (session && isAdmin) {
+   return <Navigate to={from} replace />;
+ }
+
+ return (
+   <Container component="main" maxWidth="xs">
+     <Paper
+       elevation={6}
+       sx={{
+         marginTop: 8,
+         display: 'flex',
+         flexDirection: 'column',
+         alignItems: 'center',
+         padding: { xs: 3, sm: 4 }, // Responsive Padding
+         borderRadius: '12px', // Abgerundete Ecken
+       }}
+     >
+       <Avatar sx={{ m: 1, bgcolor: 'secondary.main' }}>
+         <LockOutlinedIcon />
+       </Avatar>
+       <Typography component="h1" variant="h5" sx={{ mb: 3 }}>
+         Admin Login
+       </Typography>
+       <Box component="form" onSubmit={handleLogin} noValidate sx={{ mt: 1, width: '100%' }}>
+         <TextField
+           margin="normal"
+           required
+           fullWidth
+           id="email"
+           label="E-Mail-Adresse"
+           name="email"
+           autoComplete="email"
+           autoFocus
+           value={email}
+           onChange={(e) => setEmail(e.target.value)}
+           disabled={isLoading}
+         />
+         <TextField
+           margin="normal"
+           required
+           fullWidth
+           name="password"
+           label="Passwort"
+           type="password"
+           id="password"
+           autoComplete="current-password"
+           value={password}
+           onChange={(e) => setPassword(e.target.value)}
+           disabled={isLoading}
+         />
+         <Button
+           type="submit"
+           fullWidth
+           variant="contained"
+           color="primary"
+           sx={{ mt: 3, mb: 2, py: 1.5, fontSize: '1rem' }} // Größerer Button
+           disabled={isLoading}
+         >
+           {isLoading ? <CircularProgress size={24} color="inherit" /> : 'Anmelden'}
+         </Button>
+       </Box>
+     </Paper>
+   </Container>
+ );
+};
+
+export default LoginPage;
+
+src/pages/admin/DashboardPage.tsx
+// File: src/pages/admin/DashboardPage.tsx
+import React, { useEffect, useState } from 'react';
+import { Typography, Paper, Grid, Box, Card, CardContent, CardActionArea, Skeleton, Button } from '@mui/material';
+import { Link as RouterLink } from 'react-router-dom';
+import MovieIcon from '@mui/icons-material/Movie'; // Szenen
+import PeopleIcon from '@mui/icons-material/People'; // Charaktere
+import FlagIcon from '@mui/icons-material/Flag'; // Flags
+import SettingsIcon from '@mui/icons-material/Settings'; // Einstellungen
+// import BarChartIcon from '@mui/icons-material/BarChart'; // Für Statistiken
+import AddIcon from '@mui/icons-material/Add';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import { supabase } from '../../services/supabaseClient'; // Für direkte DB-Abfragen, falls benötigt
+
+// Interface für die Statistik-Kacheln
+interface StatCardProps {
+ title: string;
+ count: number | string;
+ icon: React.ReactNode;
+ color: string; // z.B. 'primary.main', 'secondary.light'
+ linkTo: string;
+ isLoading: boolean;
+}
+
+const StatCard: React.FC<StatCardProps> = ({ title, count, icon, color, linkTo, isLoading }) => (
+ <Grid item xs={12} sm={6} md={4} lg={3}> {/* Responsive Grid-Einteilung */}
+   <Card elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column', transition: 'transform 0.2s, box-shadow 0.2s', '&:hover': { transform: 'translateY(-4px)', boxShadow: 6 } }}>
+     <CardActionArea component={RouterLink} to={linkTo} sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}>
+       <CardContent sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', p: 2.5 }}>
+         <Box sx={{
+           p: 2, // Mehr Padding für das Icon
+           borderRadius: '50%',
+           backgroundColor: isLoading ? 'grey.300' : color,
+           color: isLoading ? 'transparent' : 'common.white',
+           mr: 2.5, // Mehr Abstand
+           display: 'flex',
+           alignItems: 'center',
+           justifyContent: 'center',
+           width: 56, // Größeres Icon-Hintergrund
+           height: 56,
+         }}>
+           {isLoading ? <Skeleton variant="circular" width={28} height={28} /> : React.cloneElement(icon as React.ReactElement, { sx: { fontSize: 28 }})}
+         </Box>
+         <Box>
+           {isLoading ? (
+             <>
+               <Skeleton variant="text" width={80} height={30} />
+               <Skeleton variant="text" width={120} height={20} />
+             </>
+           ) : (
+             <>
+               <Typography variant="h5" component="div" fontWeight="bold">{count}</Typography>
+               <Typography variant="body2" color="text.secondary">{title}</Typography>
+             </>
+           )}
+         </Box>
+       </CardContent>
+     </CardActionArea>
+   </Card>
+ </Grid>
+);
+
+const DashboardPage: React.FC = () => {
+ // Beispiel für das Laden von Statistiken (z.B. Anzahl der Szenen)
+ const [sceneCount, setSceneCount] = useState<number | string>('...');
+ const [characterCount, setCharacterCount] = useState<number | string>('...'); // Platzhalter
+ const [flagCount, setFlagCount] = useState<number | string>('...'); // Platzhalter
+ const [isLoadingStats, setIsLoadingStats] = useState(true);
+
+ useEffect(() => {
+   const fetchStats = async () => {
+     setIsLoadingStats(true);
+     try {
+       // Anzahl der Szenen
+       const { count: scenes, error: sceneError } = await supabase
+         .from('scenes')
+         .select('*', { count: 'exact', head: true }); // head:true holt nur den count
+
+       if (sceneError) console.error('Error fetching scene count:', sceneError.message);
+       setSceneCount(scenes ?? 'N/A');
+
+       // TODO: Implementiere das Laden der Charakter- und Flag-Anzahl, sobald die entsprechenden Admin-Module existieren
+       setCharacterCount(0); // Platzhalter
+       setFlagCount(0); // Platzhalter
+
+     } catch (error: any) {
+       console.error("Error fetching dashboard stats:", error.message);
+       setSceneCount('Fehler');
+       setCharacterCount('Fehler');
+       setFlagCount('Fehler');
+     } finally {
+       setIsLoadingStats(false);
+     }
+   };
+
+   fetchStats();
+ }, []);
+
+ return (
+   <>
+     <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 3, fontWeight: 'bold' }}>
+       Admin Dashboard
+     </Typography>
+
+     <Grid container spacing={3} sx={{ mb: 4 }}>
+       <StatCard title="Szenen Gesamt" count={sceneCount} icon={<MovieIcon />} color="primary.main" linkTo="/admin/scenes" isLoading={isLoadingStats} />
+       <StatCard title="Charaktere" count={characterCount} icon={<PeopleIcon />} color="secondary.main" linkTo="/admin/characters" isLoading={isLoadingStats} /> {/* Link anpassen, wenn Seite existiert */}
+       <StatCard title="Definierte Flags" count={flagCount} icon={<FlagIcon />} color="success.main" linkTo="/admin/flags" isLoading={isLoadingStats} /> {/* Link anpassen */}
+       <StatCard title="Einstellungen" count={""} icon={<SettingsIcon />} color="info.main" linkTo="/admin/settings" isLoading={isLoadingStats} /> {/* Link anpassen */}
+     </Grid>
+
+     <Paper elevation={2} sx={{ p: {xs: 2, md:3}, mt: 4, borderRadius: '8px' }}>
+       <Typography variant="h6" component="h2" gutterBottom>
+         Willkommen im Zauberbuch Admin-Panel!
+       </Typography>
+       <Typography variant="body1" color="text.secondary" paragraph>
+         Hier kannst du alle Aspekte deines textbasierten Abenteuers "Das Magische Zauberbuch" verwalten.
+         Nutze die Navigation auf der linken Seite, um Szenen zu erstellen und zu bearbeiten,
+         Charaktere zu definieren, Spiellogik über Flags zu steuern oder globale Einstellungen anzupassen.
+       </Typography>
+       <Typography variant="body2" color="text.secondary">
+         Diese Oberfläche dient als zentrale Anlaufstelle für die Content-Pflege und Konfiguration deines Spiels.
+       </Typography>
+       <Box sx={{mt: 3, display: 'flex', gap: 2, flexWrap: 'wrap'}}>
+           <Button component={RouterLink} to="/admin/scenes/new" variant="contained" startIcon={<AddIcon />}>
+               Neue Szene erstellen
+           </Button>
+           <Button component={RouterLink} to="/" variant="outlined" startIcon={<PlayArrowIcon />}>
+               Spiel starten (Landing Page)
+           </Button>
+       </Box>
+     </Paper>
+   </>
+ );
+};
+
+export default DashboardPage;
+
+src/services/sceneService.ts
+// File: src/services/sceneService.ts
+import { supabase } from './supabaseClient';
+import type { SceneData, ChoiceData, SceneListEntry } from '../types/gameTypes';
+
+// Interface für Paginierungs-, Sortier- und Suchparameter
+export interface FetchScenesListParams {
+ page?: number; // 0-basiert
+ rowsPerPage?: number;
+ orderBy?: keyof SceneListEntry | 'choices_count'; // Erlaube Sortierung nach 'choices_count'
+ orderDirection?: 'asc' | 'desc';
+ searchTerm?: string;
+}
+
+/**
+* Ruft eine Liste von Szenen ab, mit Paginierung, Sortierung und Suchfunktion.
+* @param params - Objekt mit Paginierungs-, Sortier- und Suchparametern.
+* @returns Ein Objekt mit den Szenen und der Gesamtanzahl der Szenen.
+*/
+export const fetchScenesList = async (
+ params: FetchScenesListParams = {}
+): Promise<{ scenes: SceneListEntry[], totalCount: number }> => {
+ const {
+   page = 0,
+   rowsPerPage = 10,
+   orderBy = 'updated_at',
+   orderDirection = 'desc',
+   searchTerm = ''
+ } = params;
+
+ let query = supabase
+   .from('scenes')
+   .select('id, scene_slug, title_for_admin, updated_at, tags, choices(count)', { count: 'exact' });
+
+ if (searchTerm) {
+   query = query.or(`scene_slug.ilike.%${searchTerm}%,title_for_admin.ilike.%${searchTerm}%`);
+ }
+
+ if (orderBy && orderBy !== 'choices_count') {
+        query = query.order(orderBy as string, { ascending: orderDirection === 'asc' });
+ }
+ if (orderBy !== 'id') { 
+       query = query.order('id', { ascending: true });
+ }
+
+ const from = page * rowsPerPage;
+ const to = from + rowsPerPage - 1;
+ query = query.range(from, to);
+
+ const { data, error, count } = await query;
+
+ if (error) {
+   console.error("Supabase error fetching scenes list:", error);
+   throw error;
+ }
+
+ let scenes = (data || []).map(s => ({
+   id: s.id,
+   scene_slug: s.scene_slug,
+   title_for_admin: s.title_for_admin,
+   updated_at: s.updated_at,
+   tags: s.tags || [],
+   choices_count: Array.isArray(s.choices) && s.choices.length > 0 && typeof s.choices[0].count === 'number'
+                  ? s.choices[0].count
+                  : 0,
+ })) as SceneListEntry[];
+
+ if (orderBy === 'choices_count') {
+   scenes.sort((a, b) => {
+     const countA = a.choices_count || 0;
+     const countB = b.choices_count || 0;
+     return orderDirection === 'asc' ? countA - countB : countB - countA;
+   });
+ }
+
+ return { scenes, totalCount: count || 0 };
+};
+
+/**
+* Ruft eine einzelne Szene anhand ihrer ID ab, inklusive aller zugehörigen Choices.
+* @param sceneId - Die ID der abzurufenden Szene.
+* @returns Die Szene oder null, falls nicht gefunden.
+*/
+export const fetchSceneById = async (sceneId: string): Promise<SceneData | null> => {
+ const { data, error } = await supabase
+   .from('scenes')
+   .select('*, choices(*)')
+   .eq('id', sceneId)
+   .single();
+
+ if (error) {
+   console.error("Supabase error fetching scene by id:", error);
+   if (error.code === 'PGRST116') {
+       return null;
+   }
+   throw error;
+ }
+
+ if (data && data.choices) {
+   data.choices.sort((a: ChoiceData, b: ChoiceData) => (a.order_in_scene ?? Infinity) - (b.order_in_scene ?? Infinity));
+ }
+ if (data && data.tags === null) {
+   data.tags = [];
+ }
+
+ return data as SceneData | null;
+};
+
+/**
+* Speichert eine Szene (erstellt eine neue oder aktualisiert eine bestehende).
+* Beinhaltet das Management der zugehörigen Choices.
+* @param scenePayload - Die Daten der zu speichernden Szene. 'id' ist optional (für neue Szenen).
+* @param choicesPayload - Ein Array der Choice-Daten, die zur Szene gehören.
+* @returns Die gespeicherte Szene.
+*/
+export const saveScene = async (
+ scenePayload: Partial<SceneData>,
+ choicesPayload: ChoiceData[]
+): Promise<SceneData> => {
+ const { id, choices, created_at, updated_at, choices_count, ...sceneDetailsToSave } = scenePayload as SceneData;
+
+ let savedSceneResult: SceneData;
+
+ if (id) { // Bestehende Szene aktualisieren
+   const { data: updatedSceneData, error: updateSceneError } = await supabase
+     .from('scenes')
+     .update(sceneDetailsToSave)
+     .eq('id', id)
+     .select()
+     .single();
+
+   if (updateSceneError) {
+     console.error("Supabase error updating scene:", updateSceneError);
+     throw updateSceneError;
+   }
+   savedSceneResult = updatedSceneData as SceneData;
+
+   const currentChoiceIdsInForm = choicesPayload.map(c => c.id).filter(Boolean) as string[];
+   const { data: originalChoicesData, error: fetchOriginalChoicesError } = await supabase
+       .from('choices')
+       .select('id')
+       .eq('scene_id', savedSceneResult.id!);
+
+   if (fetchOriginalChoicesError) {
+       console.warn("Could not fetch original choices for deletion check", fetchOriginalChoicesError);
+   }
+   const originalChoiceIds = (originalChoicesData || []).map(c => c.id);
+   const choicesToDelete = originalChoiceIds.filter(origId => !currentChoiceIdsInForm.includes(origId));
+
+   if (choicesToDelete.length > 0) {
+     const { error: deleteError } = await supabase.from('choices').delete().in('id', choicesToDelete);
+     if (deleteError) {
+       console.warn("Supabase error deleting choices:", deleteError.message);
+     }
+   }
+
+   const choicesForUpsert = choicesPayload.map((choice, index) => {
+       const { temp_id, created_at: c_created_at, updated_at: c_updated_at, ...choiceFields } = choice;
+       return {
+           ...choiceFields,
+           scene_id: savedSceneResult.id!,
+           order_in_scene: index
+       };
+   });
+
+   if (choicesForUpsert.length > 0) {
+       const { data: upsertedChoicesData, error: upsertChoicesError } = await supabase
+       .from('choices')
+       .upsert(choicesForUpsert, { onConflict: 'id', ignoreDuplicates: false })
+       .select();
+
+       if (upsertChoicesError) {
+           console.error("Supabase error upserting choices:", upsertChoicesError);
+           throw upsertChoicesError;
+       }
+       savedSceneResult.choices = (upsertedChoicesData || []).sort((a,b) => (a.order_in_scene ?? 0) - (b.order_in_scene ?? 0));
+   } else {
+       savedSceneResult.choices = [];
+   }
+
+ } else { // Neue Szene erstellen
+   const { data: newSceneData, error: insertSceneError } = await supabase
+     .from('scenes')
+     .insert(sceneDetailsToSave)
+     .select()
+     .single();
+
+   if (insertSceneError) {
+     console.error("Supabase error inserting scene:", insertSceneError);
+     throw insertSceneError;
+   }
+   savedSceneResult = newSceneData as SceneData;
+
+   if (choicesPayload.length > 0) {
+     const choicesToInsert = choicesPayload.map((choice, index) => {
+       const { id: choiceId, temp_id, created_at: c_created_at, updated_at: c_updated_at, ...choiceFieldsNoId } = choice;
+       return {
+           ...choiceFieldsNoId,
+           scene_id: savedSceneResult.id!,
+           order_in_scene: index
+       };
+     });
+
+     const { data: insertedChoicesData, error: choicesError } = await supabase
+       .from('choices')
+       .insert(choicesToInsert)
+       .select();
+
+     if (choicesError) {
+       console.error("Supabase error inserting choices for new scene:", choicesError);
+       throw choicesError;
+     }
+     savedSceneResult.choices = (insertedChoicesData || []).sort((a,b) => (a.order_in_scene ?? 0) - (b.order_in_scene ?? 0));
+   } else {
+     savedSceneResult.choices = [];
+   }
+ }
+ if (savedSceneResult && savedSceneResult.tags === null) {
+   savedSceneResult.tags = [];
+ }
+ return savedSceneResult;
+};
+
+/**
+* Löscht eine Szene anhand ihrer ID.
+* Zugehörige Choices werden durch 'ON DELETE CASCADE' in der Datenbank automatisch mitgelöscht.
+* @param sceneId - Die ID der zu löschenden Szene.
+*/
+export const deleteScene = async (sceneId: string): Promise<void> => {
+ const { error } = await supabase
+   .from('scenes')
+   .delete()
+   .eq('id', sceneId);
+
+ if (error) {
+   console.error("Supabase error deleting scene:", error);
+   throw error;
+ }
+};
+
+src/pages/admin/scenes/SceneListPage.tsx
+// File: src/pages/admin/scenes/SceneListPage.tsx
+import React from 'react';
+import SceneListComponent from '../../../components/Admin/Scenes/SceneList.tsx'; // Die Komponente, die die Liste darstellt
+
+/**
+* SceneListPage dient als Wrapper-Seite für die SceneListComponent.
+* Das AdminLayout wird durch die ProtectedAdminRoute-Komponente in App.tsx bereitgestellt,
+* die diese Seite als Kind-Route rendert.
+*/
+const SceneListPage: React.FC = () => {
+ return (
+   <SceneListComponent />
+ );
+};
+
+export default SceneListPage;
+
+src/components/Admin/Scenes/SceneList.tsx
+// File: src/components/Admin/Scenes/SceneList.tsx
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+ Box, Typography, Button, Paper, CircularProgress, Alert,
+ Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+ TableSortLabel, TablePagination, IconButton, Tooltip, Chip, Stack, TextField, InputAdornment,
+ debounce // Hilfsfunktion für verzögerte Ausführung (muss importiert oder selbst implementiert werden)
+} from '@mui/material';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
+import SearchIcon from '@mui/icons-material/Search';
+// import VisibilityIcon from '@mui/icons-material/Visibility'; // Für Vorschau/Details
+import { visuallyHidden } from '@mui/utils'; // Für Barrierefreiheit bei Sortierung
+
+import { fetchScenesList, deleteScene, FetchScenesListParams } from '../../../services/sceneService';
+import type { SceneListEntry } from '../../../types/gameTypes';
+import ConfirmationDialog from '../../Shared/ConfirmationDialog'; // Bestätigungsdialog für Löschvorgänge
+import { useNotification } from '../../../context/NotificationContext'; // Für Toast-Benachrichtigungen
+
+type OrderDirection = 'asc' | 'desc';
+
+interface HeadCell {
+ id: keyof SceneListEntry | 'actions' | 'choices_count';
+ label: string;
+ numeric: boolean;
+ sortable: boolean;
+ width?: string;
+ align?: 'left' | 'right' | 'center';
+}
+
+// Definition der Tabellenkopfzellen
+const headCells: readonly HeadCell[] = [
+ { id: 'title_for_admin', numeric: false, label: 'Titel / Slug', sortable: true, width: '35%' },
+ { id: 'tags', numeric: false, label: 'Tags', sortable: false, width: '20%' },
+ { id: 'choices_count', numeric: true, label: 'Optionen', sortable: true, width: '10%', align: 'center' },
+ { id: 'updated_at', numeric: false, label: 'Letzte Änderung', sortable: true, width: '20%' },
+ { id: 'actions', numeric: true, label: 'Aktionen', sortable: false, width: '15%', align: 'right' },
+];
+
+// Einfache Debounce Implementierung, falls nicht aus einer Bibliothek importiert
+const simpleDebounce = <F extends (...args: any[]) => any>(func: F, waitFor: number) => {
+ let timeout: ReturnType<typeof setTimeout> | null = null;
+
+ const debounced = (...args: Parameters<F>) => {
+   if (timeout !== null) {
+     clearTimeout(timeout);
+     timeout = null;
+   }
+   timeout = setTimeout(() => func(...args), waitFor);
+ };
+
+ return debounced as (...args: Parameters<F>) => ReturnType<F>;
+};
+
+
+const SceneListComponent: React.FC = () => {
+ const [scenes, setScenes] = useState<SceneListEntry[]>([]);
+ const [isLoading, setIsLoading] = useState(false);
+ const { showToast } = useNotification();
+ const navigate = useNavigate();
+
+ const [orderDirection, setOrderDirection] = useState<OrderDirection>('desc');
+ const [orderBy, setOrderBy] = useState<keyof SceneListEntry | 'choices_count'>('updated_at');
+ const [page, setPage] = useState(0);
+ const [rowsPerPage, setRowsPerPage] = useState(5);
+ const [totalRows, setTotalRows] = useState(0);
+ const [searchTerm, setSearchTerm] = useState('');
+ const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+ const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
+ const [sceneToDelete, setSceneToDelete] = useState<SceneListEntry | null>(null);
+ const [isDeleting, setIsDeleting] = useState(false);
+
+ const debouncedSetSearch = useMemo(
+   () => simpleDebounce((value: string) => { // Verwendung der einfachen Debounce-Funktion
+     setDebouncedSearchTerm(value);
+     setPage(0);
+   }, 500),
+   []
+ );
+
+ const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+   setSearchTerm(event.target.value);
+   debouncedSetSearch(event.target.value);
+ };
+
+ const loadScenes = useCallback(async () => {
+   setIsLoading(true);
+   try {
+     const params: FetchScenesListParams = {
+       page,
+       rowsPerPage,
+       orderBy,
+       orderDirection,
+       searchTerm: debouncedSearchTerm,
+     };
+     const { scenes: fetchedScenes, totalCount } = await fetchScenesList(params);
+     setScenes(fetchedScenes);
+     setTotalRows(totalCount);
+   } catch (err: any) {
+     console.error("Fehler beim Laden der Szenen:", err);
+     showToast(err.message || "Szenen konnten nicht geladen werden.", 'error');
+     setScenes([]);
+     setTotalRows(0);
+   } finally {
+     setIsLoading(false);
+   }
+ }, [page, rowsPerPage, orderBy, orderDirection, debouncedSearchTerm, showToast]);
+
+ useEffect(() => {
+   loadScenes();
+ }, [loadScenes]);
+
+ const handleRequestSort = (property: keyof SceneListEntry | 'choices_count') => {
+   const isAsc = orderBy === property && orderDirection === 'asc';
+   setOrderDirection(isAsc ? 'desc' : 'asc');
+   setOrderBy(property);
+   setPage(0);
+ };
+
+ const handleChangePage = (event: unknown, newPage: number) => {
+   setPage(newPage);
+ };
+
+ const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+   setRowsPerPage(parseInt(event.target.value, 10));
+   setPage(0);
+ };
+
+ const handleDeleteClick = (scene: SceneListEntry) => {
+   setSceneToDelete(scene);
+   setOpenDeleteDialog(true);
+ };
+
+ const handleCloseDeleteDialog = () => {
+   if (isDeleting) return;
+   setOpenDeleteDialog(false);
+   setSceneToDelete(null);
+ };
+
+ const handleConfirmDelete = async () => {
+   if (!sceneToDelete || !sceneToDelete.id) return;
+   setIsDeleting(true);
+   try {
+     await deleteScene(sceneToDelete.id);
+     showToast(`Szene "${sceneToDelete.title_for_admin || sceneToDelete.scene_slug}" erfolgreich gelöscht.`, 'success');
+     if (page > 0 && scenes.length === 1 && totalRows > rowsPerPage) {
+       setPage(prevPage => prevPage - 1);
+     } else {
+       loadScenes();
+     }
+   } catch (err: any) {
+     console.error("Fehler beim Löschen der Szene:", err);
+     showToast(err.message || "Fehler beim Löschen der Szene.", 'error');
+   } finally {
+     setIsDeleting(false);
+     handleCloseDeleteDialog();
+   }
+ };
+
+ return (
+   <Paper elevation={2} sx={{ p: { xs: 1.5, md: 3 }, borderRadius: '8px' }}>
+     <Stack
+       direction={{ xs: 'column', sm: 'row' }}
+       justifyContent="space-between"
+       alignItems={{ xs: 'flex-start', sm: 'center' }}
+       spacing={2}
+       sx={{ mb: 3 }}
+     >
+       <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+         Szenenübersicht
+       </Typography>
+       <Button
+         variant="contained"
+         color="primary"
+         startIcon={<AddIcon />}
+         onClick={() => navigate('/admin/scenes/new')}
+         sx={{ alignSelf: { xs: 'flex-end', sm: 'unset' } }}
+       >
+         Neue Szene
+       </Button>
+     </Stack>
+
+     <Box sx={{ mb: 2.5 }}>
+       <TextField
+         fullWidth
+         variant="outlined"
+         placeholder="Szenen durchsuchen (nach Slug, Titel)..."
+         value={searchTerm}
+         onChange={handleSearchChange}
+         InputProps={{
+           startAdornment: (
+             <InputAdornment position="start">
+               <SearchIcon />
+             </InputAdornment>
+           ),
+           sx: { borderRadius: '8px' }
+         }}
+       />
+     </Box>
+
+     {isLoading && scenes.length === 0 && (
+       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 5 }}>
+         <CircularProgress />
+         <Typography sx={{ ml: 2 }}>Lade Szenen...</Typography>
+       </Box>
+     )}
+
+     {!isLoading && scenes.length === 0 && !debouncedSearchTerm && (
+       <Typography sx={{ my: 4, textAlign: 'center', color: 'text.secondary' }}>
+         Noch keine Szenen erstellt. Klicken Sie auf "Neue Szene", um zu beginnen!
+       </Typography>
+     )}
+
+     {!isLoading && scenes.length === 0 && debouncedSearchTerm && (
+       <Typography sx={{ my: 4, textAlign: 'center', color: 'text.secondary' }}>
+         Keine Szenen für den Suchbegriff "{debouncedSearchTerm}" gefunden.
+       </Typography>
+     )}
+
+     {scenes.length > 0 && (
+       <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: '8px', overflowX: 'auto' }}>
+         <Table stickyHeader size="medium" aria-label="Szenen Tabelle">
+           <TableHead>
+             <TableRow>
+               {headCells.map((headCell) => (
+                 <TableCell
+                   key={headCell.id}
+                   align={headCell.align || (headCell.numeric ? 'right' : 'left')}
+                   padding="normal"
+                   sortDirection={orderBy === headCell.id ? orderDirection : false}
+                   sx={{ width: headCell.width, fontWeight: 'bold', backgroundColor: 'action.hover' }}
+                 >
+                   {headCell.sortable ? (
+                     <TableSortLabel
+                       active={orderBy === headCell.id}
+                       direction={orderBy === headCell.id ? orderDirection : 'asc'}
+                       onClick={() => headCell.id !== 'actions' && handleRequestSort(headCell.id as keyof SceneListEntry | 'choices_count')}
+                     >
+                       {headCell.label}
+                       {orderBy === headCell.id ? (
+                         <Box component="span" sx={visuallyHidden}>
+                           {orderDirection === 'desc' ? 'absteigend sortiert' : 'aufsteigend sortiert'}
+                         </Box>
+                       ) : null}
+                     </TableSortLabel>
+                   ) : (
+                     headCell.label
+                   )}
+                 </TableCell>
+               ))}
+             </TableRow>
+           </TableHead>
+           <TableBody>
+             {isLoading && scenes.length > 0 && (
+                 <TableRow>
+                   <TableCell colSpan={headCells.length} align="center" sx={{ py: 4 }}>
+                       <CircularProgress size={30} />
+                   </TableCell>
+                 </TableRow>
+             )}
+             {!isLoading && scenes.map((scene) => (
+               <TableRow hover key={scene.id} sx={{ '&:last-child td, &:last-child th': { border: 0 }, '&:hover': { backgroundColor: 'action.selected' } }}>
+                 <TableCell component="th" scope="row">
+                   <Typography
+                       variant="subtitle1"
+                       color="primary.main"
+                       component={RouterLink}
+                       to={`/admin/scenes/edit/${scene.id}`}
+                       sx={{textDecoration: 'none', fontWeight: 'medium', '&:hover': {textDecoration: 'underline'}}}
+                   >
+                       {scene.title_for_admin || '(Ohne Admin-Titel)'}
+                   </Typography>
+                   <Typography variant="caption" color="textSecondary" sx={{ fontFamily: 'monospace', display: 'block' }}>
+                     {scene.scene_slug}
+                   </Typography>
+                 </TableCell>
+                 <TableCell>
+                   <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                     {(scene.tags && scene.tags.length > 0) ? scene.tags.map((tag) => (
+                       <Chip key={tag} label={tag} size="small" variant="outlined" sx={{my: 0.25}}/>
+                     )) : <Typography variant="caption" color="text.disabled">-</Typography>}
+                   </Stack>
+                 </TableCell>
+                 <TableCell align="center">{scene.choices_count ?? 0}</TableCell>
+                 <TableCell>
+                   {scene.updated_at
+                     ? new Date(scene.updated_at).toLocaleString('de-DE', {
+                         day: '2-digit', month: '2-digit', year: 'numeric',
+                         hour: '2-digit', minute: '2-digit',
+                       })
+                     : <Typography variant="caption" color="text.disabled">N/A</Typography>}
+                 </TableCell>
+                 <TableCell align="right">
+                   <Tooltip title="Bearbeiten">
+                     <IconButton component={RouterLink} to={`/admin/scenes/edit/${scene.id}`} size="small" color="primary" aria-label={`Szene ${scene.title_for_admin || scene.scene_slug} bearbeiten`}>
+                       <EditIcon />
+                     </IconButton>
+                   </Tooltip>
+                   <Tooltip title="Löschen">
+                     <IconButton onClick={() => handleDeleteClick(scene)} size="small" color="error" disabled={isDeleting} aria-label={`Szene ${scene.title_for_admin || scene.scene_slug} löschen`}>
+                       <DeleteForeverIcon />
+                     </IconButton>
+                   </Tooltip>
+                 </TableCell>
+               </TableRow>
+             ))}
+           </TableBody>
+         </Table>
+       </TableContainer>
+     )}
+
+     {totalRows > 0 && (
+       <TablePagination
+         rowsPerPageOptions={[5, 10, 25, 50]}
+         component="div"
+         count={totalRows}
+         rowsPerPage={rowsPerPage}
+         page={page}
+         onPageChange={handleChangePage}
+         onRowsPerPageChange={handleChangeRowsPerPage}
+         labelRowsPerPage="Zeilen pro Seite:"
+         labelDisplayedRows={({ from, to, count }) => `${from}–${to} von ${count !== -1 ? count : `mehr als ${to}`}`}
+         sx={{mt: 2, borderTop: '1px solid', borderColor: 'divider'}}
+       />
+     )}
+
+     <ConfirmationDialog
+       open={openDeleteDialog}
+       onClose={handleCloseDeleteDialog}
+       onConfirm={handleConfirmDelete}
+       title="Szene endgültig löschen?"
+       description={`Möchtest du die Szene "${sceneToDelete?.title_for_admin || sceneToDelete?.scene_slug}" wirklich unwiderruflich löschen? Alle zugehörigen Entscheidungsoptionen werden ebenfalls entfernt. Diese Aktion kann nicht rückgängig gemacht werden.`}
+       confirmText="Endgültig löschen"
+       cancelText="Abbrechen"
+       isLoading={isDeleting}
+       confirmButtonColor="error"
+     />
+   </Paper>
+ );
+};
+
+export default SceneListComponent;
+
+src/pages/admin/scenes/EditScenePage.tsx
+// File: src/pages/admin/scenes/EditScenePage.tsx
+import React from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import SceneEditorComponent from '../../../components/Admin/Scenes/SceneEditor.tsx';
+import type { SceneData } from '../../../types/gameTypes.ts';
+import { useNotification } from '../../../context/NotificationContext.tsx';
+import { Paper, Typography } from '@mui/material';
+
+const EditScenePage: React.FC = () => {
+ const { sceneId } = useParams<{ sceneId?: string }>();
+ const navigate = useNavigate();
+ const { showToast } = useNotification();
+
+ const handleSaveSuccess = (savedScene: SceneData) => {
+   showToast(`Szene "${savedScene.title_for_admin || savedScene.scene_slug}" erfolgreich gespeichert!`, 'success');
+   navigate('/admin/scenes');
+ };
+
+ const handleCancel = () => {
+   navigate('/admin/scenes');
+ };
+
+ return (
+   <Paper elevation={0} sx={{p: {xs: 1, sm:2, md:0}, backgroundColor: 'transparent' }}>
+     <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 3, fontWeight: 'bold' }}>
+       {sceneId ? 'Szene bearbeiten' : 'Neue Szene erstellen'}
+     </Typography>
+     <SceneEditorComponent
+       sceneId={sceneId}
+       onSaveSuccess={handleSaveSuccess}
+       onCancel={handleCancel}
+     />
+   </Paper>
+ );
+};
+
+export default EditScenePage;
+
+src/components/Admin/Scenes/SceneEditor.tsx
+// File: src/components/Admin/Scenes/SceneEditor.tsx
+import React, { useState, useEffect, FormEvent, useCallback } from 'react';
+import {
+ Box, Typography, TextField, Button, Paper, CircularProgress, Alert,
+ Grid, Divider, IconButton, Select, MenuItem, FormControl, InputLabel, Autocomplete, Chip, Stack,
+ Tooltip, FormHelperText, Checkbox, FormControlLabel
+} from '@mui/material';
+import AddIcon from '@mui/icons-material/AddCircleOutline';
+import DeleteForeverIcon from '@mui/icons-material/RemoveCircleOutline';
+import { fetchSceneById, saveScene } from '../../../services/sceneService.ts';
+import type { SceneData, ChoiceData } from '../../../types/gameTypes.ts';
+import KeyValueEditor from '../../Shared/KeyValueEditor.tsx';
+import { useNotification } from '../../../context/NotificationContext.tsx';
+import { v4 as uuidv4 } from 'uuid';
+
+interface SceneEditorProps {
+ sceneId?: string;
+ onSaveSuccess: (savedScene: SceneData) => void;
+ onCancel: () => void;
+}
+
+const initialSceneState: Omit<SceneData, 'id' | 'created_at' | 'updated_at' | 'choices_count'> = {
+ scene_slug: '',
+ title_for_admin: '',
+ text_for_player: '',
+ image_url: '',
+ music_url: '',
+ context_description_for_ai: '',
+ initial_prompt_for_ai: '',
+ is_ai_generated: false,
+ choices: [],
+ tags: [],
+};
+
+const SceneEditorComponent: React.FC<SceneEditorProps> = ({ sceneId, onSaveSuccess, onCancel }) => {
+ const [scene, setScene] = useState<SceneData>(initialSceneState as SceneData);
+ const [isLoading, setIsLoading] = useState(false);
+ const { showToast } = useNotification();
+ const [slugError, setSlugError] = useState<string | null>(null);
+ const [isInitialLoad, setIsInitialLoad] = useState(true);
+
+ const loadScene = useCallback(async (id: string) => {
+   setIsLoading(true);
+   setIsInitialLoad(true);
+   try {
+     const fetchedScene = await fetchSceneById(id);
+     if (fetchedScene) {
+       const choicesWithTempIds = (fetchedScene.choices || []).map(c => ({
+           ...c,
+           temp_id: c.id || uuidv4()
+       }));
+       const tagsArray = fetchedScene.tags || [];
+       setScene({ ...initialSceneState, ...fetchedScene, choices: choicesWithTempIds, tags: tagsArray });
+     } else {
+       showToast(`Szene mit ID ${id} nicht gefunden. Sie werden zum Erstellen einer neuen Szene weitergeleitet.`, 'error');
+       setScene(initialSceneState as SceneData);
+     }
+   } catch (err: any) {
+     console.error("Fehler beim Laden der Szene:", err);
+     showToast(err.message || "Szene konnte nicht geladen werden.", 'error');
+   } finally {
+     setIsLoading(false);
+     setIsInitialLoad(false);
+   }
+ }, [showToast]);
+
+ useEffect(() => {
+   if (sceneId) {
+     loadScene(sceneId);
+   } else {
+     setScene(initialSceneState as SceneData);
+     setIsInitialLoad(false);
+   }
+ }, [sceneId, loadScene]);
+
+ const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+   const { name, value, type } = e.target;
+   const checked = (e.target as HTMLInputElement).checked;
+
+   setScene(prevScene => ({
+       ...prevScene,
+       [name]: type === 'checkbox' ? checked : value
+   }));
+
+   if (name === 'scene_slug') {
+       if (value === '') {
+           setSlugError('Szenen-Slug ist ein Pflichtfeld.');
+       } else if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)) {
+           setSlugError('Slug darf nur Kleinbuchstaben, Zahlen und Bindestriche (-) enthalten. Er darf nicht mit einem Bindestrich beginnen oder enden und keine aufeinanderfolgenden Bindestriche haben.');
+       } else {
+           setSlugError(null);
+       }
+   }
+ };
+
+ const handleTagsChange = (event: any, newValue: string[]) => {
+   const cleanedValue = newValue.map(tag => tag.trim()).filter(tag => tag !== "");
+   setScene(prevScene => ({ ...prevScene, tags: cleanedValue }));
+ };
+
+ const addChoice = () => {
+   const newChoice: ChoiceData = {
+     temp_id: uuidv4(),
+     order_in_scene: scene.choices.length,
+     player_facing_text: '',
+     ai_prompt_modifier_for_next: '',
+     leads_to_specific_scene_slug: '',
+     einfluss_level: 'niedrig',
+     flags_to_set: {},
+     required_flags: {},
+   };
+   setScene(prevScene => ({ ...prevScene, choices: [...prevScene.choices, newChoice] }));
+ };
+
+ const removeChoice = (tempIdToRemove: string) => {
+   setScene(prevScene => ({
+     ...prevScene,
+     choices: prevScene.choices
+       .filter(choice => choice.temp_id !== tempIdToRemove)
+       .map((choice, index) => ({ ...choice, order_in_scene: index }))
+   }));
+ };
+
+ const handleChoiceChange = (
+   tempId: string,
+   field: keyof Omit<ChoiceData, 'id' | 'scene_id' | 'created_at' | 'updated_at' | 'temp_id' | 'flags_to_set' | 'required_flags'>,
+   value: any
+ ) => {
+   setScene(prevScene => ({
+     ...prevScene,
+     choices: prevScene.choices.map(choice =>
+       choice.temp_id === tempId ? { ...choice, [field]: value } : choice
+     ),
+   }));
+ };
+
+ const handleChoiceKeyValueChange = (
+   tempId: string,
+   field: 'flags_to_set' | 'required_flags',
+   newValues: Record<string, any>
+ ) => {
+   setScene(prevScene => ({
+     ...prevScene,
+     choices: prevScene.choices.map(choice =>
+       choice.temp_id === tempId ? { ...choice, [field]: newValues } : choice
+     ),
+   }));
+ };
+
+ const handleSubmit = async (e: FormEvent) => {
+   e.preventDefault();
+   if (!scene.scene_slug || scene.scene_slug.trim() === '') {
+     setSlugError("Szenen-Slug ist ein Pflichtfeld.");
+     showToast("Szenen-Slug ist ein Pflichtfeld und darf nicht leer sein.", 'warning');
+     return;
+   }
+   if (slugError) {
+       showToast("Bitte korrigieren Sie den Szenen-Slug, bevor Sie speichern.", 'warning');
+       return;
+   }
+
+   setIsLoading(true);
+   try {
+     const choicesToSave = scene.choices.map((choice, index) => ({
+       ...choice,
+       order_in_scene: index
+     }));
+     const scenePayloadToSave = { ...scene, choices: choicesToSave };
+     const saved = await saveScene(scenePayloadToSave, choicesToSave);
+     onSaveSuccess(saved);
+   } catch (err: any) {
+     console.error("Fehler beim Speichern der Szene:", err);
+     showToast(err.message || `Szene konnte nicht gespeichert werden. (${err.details || ''})`, 'error');
+   } finally {
+     setIsLoading(false);
+   }
+ };
+
+ if (isInitialLoad && sceneId) {
+   return (
+     <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 200px)', flexDirection: 'column' }}>
+       <CircularProgress size={50}/>
+       <Typography sx={{ mt: 2, color: 'text.secondary' }}>Lade Szenendetails...</Typography>
+     </Box>
+   );
+ }
+
+ return (
+   <Paper elevation={3} sx={{ p: { xs: 2, sm:3, md: 4 }, borderRadius: '12px' }}>
+     <Box component="form" onSubmit={handleSubmit} noValidate>
+       <Grid container spacing={3}>
+         <Grid item xs={12} md={6}>
+           <TextField
+             name="scene_slug"
+             label="Szenen-Slug"
+             value={scene.scene_slug}
+             onChange={handleInputChange}
+             required
+             fullWidth
+             disabled={isLoading}
+             helperText={slugError || "Eindeutiger Bezeichner (z.B. waldlichtung-01). Nur Kleinbuchstaben, Zahlen und '-'."}
+             error={!!slugError}
+             variant="filled"
+           />
+         </Grid>
+         <Grid item xs={12} md={6}>
+           <TextField
+             name="title_for_admin"
+             label="Titel (für Admin-Panel)"
+             value={scene.title_for_admin || ''}
+             onChange={handleInputChange}
+             fullWidth
+             disabled={isLoading}
+             helperText="Interner Titel zur Identifizierung im Admin-Panel."
+             variant="filled"
+           />
+         </Grid>
+         <Grid item xs={12}>
+           <TextField
+             name="text_for_player"
+             label="Text für Spieler"
+             value={scene.text_for_player || ''}
+             onChange={handleInputChange}
+             multiline
+             minRows={5}
+             fullWidth
+             disabled={isLoading}
+             helperText="Dieser Text wird dem Spieler in der Szene angezeigt."
+             variant="filled"
+           />
+         </Grid>
+         <Grid item xs={12} sm={6}>
+           <TextField
+             name="image_url"
+             label="Bild-URL (optional)"
+             value={scene.image_url || ''}
+             onChange={handleInputChange}
+             fullWidth
+             disabled={isLoading}
+             type="url"
+             helperText="URL zu einem passenden Bild für die Szene."
+             variant="filled"
+           />
+         </Grid>
+         <Grid item xs={12} sm={6}>
+           <TextField
+             name="music_url"
+             label="Musik-URL (optional)"
+             value={scene.music_url || ''}
+             onChange={handleInputChange}
+             fullWidth
+             disabled={isLoading}
+             type="url"
+             helperText="URL zu passender Hintergrundmusik (z.B. .mp3, .ogg)."
+             variant="filled"
+           />
+         </Grid>
+          <Grid item xs={12}>
+           <Autocomplete
+               multiple
+               id="scene-tags-autocomplete"
+               options={[]}
+               value={scene.tags || []}
+               onChange={handleTagsChange}
+               freeSolo
+               renderTags={(value: readonly string[], getTagProps) =>
+                 value.map((option: string, index: number) => (
+                   <Chip variant="outlined" label={option} {...getTagProps({ index })} onDelete={getTagProps({ index }).onDelete} />
+                 ))
+               }
+               renderInput={(params) => (
+                 <TextField
+                   {...params}
+                   variant="filled"
+                   label="Tags (optional)"
+                   placeholder="Tags hinzufügen und Enter drücken"
+                   helperText="Schlagworte zur Kategorisierung der Szene."
+                 />
+               )}
+               disabled={isLoading}
+               ChipProps={{size: 'small'}}
+             />
+         </Grid>
+         <Grid item xs={12}>
+           <Divider sx={{ my: 2, borderColor: 'grey.400' }}><Typography variant="overline" color="text.secondary">KI-Einstellungen</Typography></Divider>
+         </Grid>
+         <Grid item xs={12}>
+           <TextField
+             name="context_description_for_ai"
+             label="Kontext für KI (optional)"
+             value={scene.context_description_for_ai || ''}
+             onChange={handleInputChange}
+             multiline
+             minRows={3}
+             fullWidth
+             disabled={isLoading}
+             helperText="Zusätzlicher Kontext für die KI, wenn von dieser Szene aus eine neue generiert wird."
+             variant="filled"
+           />
+         </Grid>
+         <Grid item xs={12}>
+           <TextField
+             name="initial_prompt_for_ai"
+             label="Initialer Prompt für KI (optional)"
+             value={scene.initial_prompt_for_ai || ''}
+             onChange={handleInputChange}
+             multiline
+             minRows={3}
+             fullWidth
+             disabled={isLoading}
+             helperText="Wenn diese Szene der Startpunkt einer KI-Generierung ist, wird dieser Prompt verwendet."
+             variant="filled"
+           />
+         </Grid>
+          <Grid item xs={12}>
+            <FormControlLabel
+               control={
+               <Checkbox
+                   checked={scene.is_ai_generated || false}
+                   onChange={handleInputChange}
+                   name="is_ai_generated"
+                   disabled={isLoading}
+               />
+               }
+               label="Diese Szene wurde (hauptsächlich) von einer KI generiert."
+           />
+           <FormHelperText>Markiere dies, wenn der Inhalt dieser Szene primär durch eine KI erstellt wurde.</FormHelperText>
+         </Grid>
+         <Grid item xs={12}>
+           <Divider sx={{ my: 3, borderColor: 'grey.400' }}><Typography variant="h6" fontSize="1.3rem" color="text.secondary">Entscheidungsoptionen</Typography></Divider>
+           {scene.choices.length === 0 && !isLoading && (
+               <Typography color="text.disabled" sx={{textAlign: 'center', my: 2, fontStyle: 'italic'}}>
+                   Noch keine Entscheidungsoptionen für diese Szene vorhanden.
+               </Typography>
+           )}
+           {scene.choices.map((choice, index) => (
+             <Paper key={choice.temp_id} sx={{ p: {xs: 1.5, sm:2, md:2.5}, mb: 2.5, borderRadius: '8px' }} variant="outlined">
+               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                 <Typography variant="subtitle1" fontWeight="medium" color="text.primary">
+                   Option {index + 1}
+                 </Typography>
+                 <Tooltip title="Diese Option entfernen">
+                   <IconButton onClick={() => removeChoice(choice.temp_id!)} size="small" color="error" disabled={isLoading} aria-label={`Option ${index + 1} entfernen`}>
+                     <DeleteForeverIcon />
+                   </IconButton>
+                 </Tooltip>
+               </Stack>
+               <Grid container spacing={2.5}>
+                 <Grid item xs={12}>
+                   <TextField
+                     label="Angezeigter Text für Spieler"
+                     value={choice.player_facing_text}
+                     onChange={e => handleChoiceChange(choice.temp_id!, 'player_facing_text', e.target.value)}
+                     required
+                     fullWidth
+                     multiline
+                     minRows={2}
+                     disabled={isLoading}
+                     variant="outlined"
+                     InputLabelProps={{ shrink: true }}
+                   />
+                 </Grid>
+                 <Grid item xs={12} sm={6}>
+                   <TextField
+                     label="Führt zu Szenen-Slug (optional)"
+                     value={choice.leads_to_specific_scene_slug || ''}
+                     onChange={e => handleChoiceChange(choice.temp_id!, 'leads_to_specific_scene_slug', e.target.value)}
+                     fullWidth
+                     disabled={isLoading}
+                     helperText="Wenn leer, generiert KI die nächste Szene."
+                     variant="outlined"
+                     InputLabelProps={{ shrink: true }}
+                   />
+                 </Grid>
+                 <Grid item xs={12} sm={6}>
+                   <FormControl fullWidth disabled={isLoading} variant="outlined" size="small">
+                     <InputLabel id={`einfluss-level-label-${choice.temp_id}`}>Einflusslevel der Entscheidung</InputLabel>
+                     <Select
+                       labelId={`einfluss-level-label-${choice.temp_id}`}
+                       value={choice.einfluss_level || 'niedrig'}
+                       label="Einflusslevel der Entscheidung"
+                       onChange={e => handleChoiceChange(choice.temp_id!, 'einfluss_level', e.target.value)}
+                     >
+                       <MenuItem value="niedrig">Niedrig</MenuItem>
+                       <MenuItem value="mittel">Mittel</MenuItem>
+                       <MenuItem value="hoch">Hoch</MenuItem>
+                     </Select>
+                      <FormHelperText>Wie stark beeinflusst diese Wahl den weiteren Verlauf?</FormHelperText>
+                   </FormControl>
+                 </Grid>
+                 <Grid item xs={12}>
+                   <TextField
+                     label="KI Prompt Modifikator (optional)"
+                     value={choice.ai_prompt_modifier_for_next || ''}
+                     onChange={e => handleChoiceChange(choice.temp_id!, 'ai_prompt_modifier_for_next', e.target.value)}
+                     multiline
+                     minRows={2}
+                     fullWidth
+                     disabled={isLoading}
+                     helperText="Zusatz für den KI-Prompt, wenn diese Option gewählt wird und keine spezifische nächste Szene verlinkt ist."
+                     variant="outlined"
+                     InputLabelProps={{ shrink: true }}
+                   />
+                 </Grid>
+                 <Grid item xs={12} md={6}>
+                   <KeyValueEditor
+                     label="Flags zu setzen/ändern"
+                     values={choice.flags_to_set || {}}
+                     onChange={(newFlags) => handleChoiceKeyValueChange(choice.temp_id!, 'flags_to_set', newFlags)}
+                     disabled={isLoading}
+                     keyLabel="Flag-Name"
+                     valueLabel="Wert (true, Zahl, Text, +Zahl, -Zahl)"
+                     valueHelperText='true/false, Zahl (z.B. 10), Text (z.B. "gefunden"), "+5" (addiert 5), "-2" (subtrahiert 2).'
+                     addButtonText="Flag-Änderung hinzufügen"
+                   />
+                 </Grid>
+                 <Grid item xs={12} md={6}>
+                   <KeyValueEditor
+                     label="Benötigte Flags (optional)"
+                     values={choice.required_flags || {}}
+                     onChange={(newFlags) => handleChoiceKeyValueChange(choice.temp_id!, 'required_flags', newFlags)}
+                     disabled={isLoading}
+                     keyLabel="Flag-Name"
+                     valueLabel="Erforderlicher Wert"
+                     valueHelperText="Die Option ist nur sichtbar/wählbar, wenn das Spieler-Flag diesen Wert hat (z.B. true, 10, 'quest_aktiv')."
+                     addButtonText="Benötigtes Flag hinzufügen"
+                   />
+                 </Grid>
+               </Grid>
+             </Paper>
+           ))}
+           <Button
+             startIcon={<AddIcon />}
+             onClick={addChoice}
+             variant="outlined"
+             color="primary"
+             sx={{ mt: 1, mb: 3, textTransform: 'none', fontWeight: 'medium' }}
+             disabled={isLoading}
+           >
+             Neue Entscheidungsoption hinzufügen
+           </Button>
+         </Grid>
+       </Grid>
+       <Divider sx={{ my: 3, borderColor: 'grey.400' }} />
+       <Stack direction={{xs: 'column-reverse', sm: 'row'}} spacing={2} justifyContent="flex-end">
+         <Button onClick={onCancel} variant="outlined" color="inherit" disabled={isLoading} sx={{width: {xs: '100%', sm: 'auto'}}}>
+           Abbrechen
+         </Button>
+         <Button
+           type="submit"
+           variant="contained"
+           color="primary"
+           disabled={isLoading || !!slugError || (scene.scene_slug.trim() === '')}
+           sx={{width: {xs: '100%', sm: 'auto'}}}
+         >
+           {isLoading ? <CircularProgress size={24} color="inherit" /> : (sceneId ? 'Änderungen speichern' : 'Szene erstellen')}
+         </Button>
+       </Stack>
+        { (slugError || (scene.scene_slug.trim() === '')) && !isLoading &&
+           <FormHelperText error sx={{textAlign: 'right', mt:1}}>
+               Bitte korrigieren Sie die Fehler im Formular (z.B. ungültiger oder leerer Slug).
+           </FormHelperText>
+       }
+     </Box>
+   </Paper>
+ );
+};
+
+export default SceneEditorComponent;
+
+src/components/Shared/KeyValueEditor.tsx
+// File: src/components/Shared/KeyValueEditor.tsx
+import React, { useState, useEffect, useCallback } from 'react';
+import { Box, Typography, TextField, IconButton, Button, Stack, FormHelperText, Tooltip } from '@mui/material';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
+import { v4 as uuidv4 } from 'uuid';
+
+interface KeyValuePair {
+ id: string;
+ keyField: string;
+ valueField: string;
+}
+
+interface KeyValueEditorProps {
+ label: string;
+ values: Record<string, any>;
+ onChange: (newValues: Record<string, any>) => void;
+ disabled?: boolean;
+ keyHelperText?: string;
+ valueHelperText?: string;
+ keyLabel?: string;
+ valueLabel?: string;
+ addButtonText?: string;
+ containerSx?: object;
+}
+
+const KeyValueEditor: React.FC<KeyValueEditorProps> = ({
+ label,
+ values,
+ onChange,
+ disabled = false,
+ keyHelperText = 'Eindeutiger Name des Flags/Schlüssels.',
+ valueHelperText = 'Wert: true, false, Zahl (z.B. 10), Text (z.B. "gefunden"), "+5" (addiert 5), "-2" (subtrahiert 2).',
+ keyLabel = "Schlüssel / Flag-Name",
+ valueLabel = "Wert",
+ addButtonText,
+ containerSx = {},
+}) => {
+ const [pairs, setPairs] = useState<KeyValuePair[]>([]);
+
+ useEffect(() => {
+   const initialPairs = Object.entries(values || {}).map(([key, value]) => ({
+     id: uuidv4(),
+     keyField: key,
+     valueField: String(value),
+   }));
+   setPairs(initialPairs);
+ }, [values]);
+
+ const triggerOnChange = useCallback((currentPairs: KeyValuePair[]) => {
+   const newValuesObject: Record<string, any> = {};
+   currentPairs.forEach(p => {
+     const key = p.keyField.trim();
+     if (key !== '') {
+       const valStr = p.valueField.trim();
+       if (valStr.toLowerCase() === 'true') {
+         newValuesObject[key] = true;
+       } else if (valStr.toLowerCase() === 'false') {
+         newValuesObject[key] = false;
+       } else if (!isNaN(Number(valStr)) && valStr !== '' && !valStr.startsWith('+') && !valStr.startsWith('-')) {
+         newValuesObject[key] = Number(valStr);
+       } else {
+         newValuesObject[key] = p.valueField;
+       }
+     }
+   });
+   onChange(newValuesObject);
+ }, [onChange]);
+
+ const handlePairChange = (index: number, field: 'keyField' | 'valueField', newValue: string) => {
+   const newPairs = pairs.map((pair, i) =>
+     i === index ? { ...pair, [field]: newValue } : pair
+   );
+   setPairs(newPairs);
+ };
+
+ const addPair = () => {
+   const newPairs = [...pairs, { id: uuidv4(), keyField: '', valueField: '' }];
+   setPairs(newPairs);
+ };
+
+ const removePair = (idToRemove: string) => {
+   const newPairs = pairs.filter((pair) => pair.id !== idToRemove);
+   setPairs(newPairs);
+   triggerOnChange(newPairs);
+ };
+
+ const handleBlur = () => {
+   triggerOnChange(pairs);
+ };
+
+ return (
+   <Box sx={{ mb: 2, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: '8px', ...containerSx }}>
+     <Typography variant="subtitle1" gutterBottom color="text.primary" sx={{ fontWeight: 'medium', mb: 1.5 }}>
+       {label}
+     </Typography>
+     {pairs.length === 0 && !disabled && (
+       <Typography variant="body2" color="text.disabled" sx={{ fontStyle: 'italic', textAlign: 'center', mb: 1.5 }}>
+         Keine Einträge vorhanden.
+       </Typography>
+     )}
+     {pairs.map((pair, index) => (
+       <Stack direction="row" spacing={1.5} key={pair.id} sx={{ mb: 2, alignItems: 'flex-start' }}>
+         <TextField
+           label={keyLabel}
+           value={pair.keyField}
+           onChange={(e) => handlePairChange(index, 'keyField', e.target.value)}
+           onBlur={handleBlur}
+           size="small"
+           sx={{ flexGrow: 3 }}
+           disabled={disabled}
+           helperText={index === 0 ? keyHelperText : ''}
+           variant="outlined"
+           InputLabelProps={{ shrink: true }}
+         />
+         <TextField
+           label={valueLabel}
+           value={pair.valueField}
+           onChange={(e) => handlePairChange(index, 'valueField', e.target.value)}
+           onBlur={handleBlur}
+           size="small"
+           sx={{ flexGrow: 2 }}
+           disabled={disabled}
+           helperText={index === 0 ? valueHelperText : ''}
+           variant="outlined"
+           InputLabelProps={{ shrink: true }}
+         />
+         <Tooltip title="Diesen Eintrag entfernen">
+           <IconButton
+             onClick={() => removePair(pair.id)}
+             color="error"
+             size="medium"
+             disabled={disabled}
+             aria-label={`Eintrag ${index + 1} entfernen`}
+             sx={{ mt: '5px' }}
+           >
+             <RemoveCircleOutlineIcon />
+           </IconButton>
+         </Tooltip>
+       </Stack>
+     ))}
+     <Button
+       startIcon={<AddCircleOutlineIcon />}
+       onClick={addPair}
+       size="small"
+       variant="outlined"
+       color="primary"
+       disabled={disabled}
+       sx={{ mt: pairs.length > 0 ? 0 : 1, textTransform: 'none', fontWeight: 'medium' }}
+     >
+       {addButtonText || `Eintrag hinzufügen`}
+     </Button>
+   </Box>
+ );
+};
+
+export default KeyValueEditor;
+
+src/components/Shared/ConfirmationDialog.tsx
+// File: src/components/Shared/ConfirmationDialog.tsx
+import React from 'react';
+import Button from '@mui/material/Button';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
+import DialogTitle from '@mui/material/DialogTitle';
+import { CircularProgress, Alert, Box } from '@mui/material';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+
+interface ConfirmationDialogProps {
+ open: boolean;
+ onClose: () => void;
+ onConfirm: () => void;
+ title: string;
+ description: string | React.ReactNode;
+ confirmText?: string;
+ cancelText?: string;
+ isLoading?: boolean;
+ confirmButtonColor?: 'inherit' | 'primary' | 'secondary' | 'success' | 'error' | 'info' | 'warning';
+ dialogMaxWidth?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | false;
+ showError?: string | null;
+}
+
+const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
+ open,
+ onClose,
+ onConfirm,
+ title,
+ description,
+ confirmText = "Bestätigen",
+ cancelText = "Abbrechen",
+ isLoading = false,
+ confirmButtonColor = 'primary',
+ dialogMaxWidth = 'xs',
+ showError = null,
+}) => {
+ return (
+   <Dialog
+     open={open}
+     onClose={isLoading ? undefined : onClose}
+     aria-labelledby="confirmation-dialog-title"
+     aria-describedby="confirmation-dialog-description"
+     fullWidth
+     maxWidth={dialogMaxWidth}
+   >
+     <DialogTitle id="confirmation-dialog-title" sx={{display: 'flex', alignItems: 'center'}}>
+       {confirmButtonColor === 'error' && <WarningAmberIcon color="error" sx={{mr:1}}/>}
+       {title}
+     </DialogTitle>
+     <DialogContent>
+       {typeof description === 'string' ? (
+         <DialogContentText id="confirmation-dialog-description">
+           {description}
+         </DialogContentText>
+       ) : (
+         description
+       )}
+       {showError && (
+         <Alert severity="error" sx={{ mt: 2 }}>
+           {showError}
+         </Alert>
+       )}
+     </DialogContent>
+     <DialogActions sx={{ px:3, pb:2, pt:1 }}>
+       <Button onClick={onClose} color="inherit" disabled={isLoading} variant="outlined">
+         {cancelText}
+       </Button>
+       <Button
+         onClick={onConfirm}
+         color={confirmButtonColor}
+         variant="contained"
+         autoFocus
+         disabled={isLoading}
+         startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : null}
+       >
+         {confirmText}
+       </Button>
+     </DialogActions>
+   </Dialog>
+ );
+};
+
+export default ConfirmationDialog;
+
+G. React Frontend - Spiel-Seiten
+src/pages/game/StartPage.tsx
+// File: src/pages/game/StartPage.tsx
+import React, { useState } from 'react';
+import { useNavigate, Link as RouterLink } from 'react-router-dom';
+import { supabase } from '../../services/supabaseClient.ts';
+import { Button, Typography, Container, Paper, CircularProgress, Box, Alert } from '@mui/material';
+import { CreateSessionResponse } from '../../types/gameTypes.ts';
+import { useNotification } from '../../context/NotificationContext.tsx';
+import AutoStoriesIcon from '@mui/icons-material/AutoStories';
+
+const StartPage: React.FC = () => {
+ const navigate = useNavigate();
+ const [isLoading, setIsLoading] = useState(false);
+ const { showToast } = useNotification();
+
+ const handleStartGame = async () => {
+   setIsLoading(true);
+   try {
+     const { data, error: functionError } = await supabase.functions.invoke<CreateSessionResponse>(
+       'create-player-session',
+       { body: {} }
+     );
+
+     if (functionError) {
+       console.error("Function Error (create-player-session):", functionError);
+       throw new Error(functionError.message || 'Fehler beim Aufrufen der Serverfunktion zum Erstellen der Session.');
+     }
+
+     if (data && data.player_session_id && data.initial_scene) {
+       showToast('Neues Abenteuer beginnt!', 'success');
+       navigate(`/play/session/${data.player_session_id}`);
+     } else {
+       console.error("Invalid data from create-player-session function:", data);
+       showToast('Spielsession konnte nicht korrekt erstellt werden. Der Server hat nicht alle benötigten Daten geliefert.', 'error');
+     }
+   } catch (err: any) {
+     console.error("Start Game Error:", err);
+     showToast(err.message || 'Ein unbekannter Fehler ist beim Starten des Spiels aufgetreten.', 'error');
+   } finally {
+     setIsLoading(false);
+   }
+ };
+
+ return (
+   <Container
+       component="main"
+       maxWidth="sm"
+       sx={{
+           display: 'flex',
+           flexDirection: 'column',
+           alignItems: 'center',
+           justifyContent: 'center',
+           minHeight: '100vh',
+           textAlign: 'center',
+           background: 'url("https://www.transparenttextures.com/patterns/worn-dots.png"), linear-gradient(to bottom right, #2A3F54, #1C2B3A)',
+           backgroundBlendMode: 'overlay, normal',
+           color: 'white',
+           p: { xs: 2, sm: 3 },
+       }}
+   >
+     <Paper
+       elevation={8}
+       sx={{
+           padding: { xs: 3, sm: 5 },
+           borderRadius: '16px',
+           backgroundColor: 'rgba(28, 43, 58, 0.88)',
+           backdropFilter: 'blur(8px)',
+           width: '100%',
+           border: '1px solid rgba(255, 255, 255, 0.1)',
+       }}
+     >
+       <AutoStoriesIcon sx={{ fontSize: 60, color: 'secondary.main', mb: 2 }} />
+       <Typography variant="h2" component="h1" gutterBottom sx={{ fontFamily: '"Cinzel", serif', fontWeight: 700, color: 'secondary.light', textShadow: '1px 1px 3px rgba(0,0,0,0.4)' }}>
+         Das Abenteuer ruft!
+       </Typography>
+       <Typography variant="h6" color="rgba(220, 220, 230, 0.85)" paragraph sx={{ fontFamily: '"Quintessential", serif', mb: 4, fontStyle: 'italic' }}>
+         Bist du bereit, dein Schicksal in den verzauberten Seiten dieses Buches zu schmieden?
+       </Typography>
+       <Box sx={{ mt: 3, mb: 2 }}>
+         <Button
+           variant="contained"
+           color="secondary"
+           size="large"
+           onClick={handleStartGame}
+           disabled={isLoading}
+           sx={{
+               fontFamily: '"MedievalSharp", cursive',
+               fontSize: '1.5rem',
+               px: {xs: 4, sm: 7},
+               py: {xs: 1.5, sm: 2},
+               borderRadius: '8px',
+               boxShadow: '0px 6px 18px rgba(0,0,0,0.35)',
+               transition: 'transform 0.2s ease-in-out, background-color 0.2s',
+               '&:hover': {
+                   backgroundColor: 'secondary.dark',
+                   transform: 'scale(1.03)',
+               },
+               minWidth: '250px'
+           }}
+         >
+           {isLoading ? (
+             <CircularProgress size={30} color="inherit" />
+           ) : (
+             'Neues Spiel starten'
+           )}
+         </Button>
+       </Box>
+        <Button
+           component={RouterLink}
+           to="/"
+           variant="text"
+           size="small"
+           sx={{
+               mt: 4,
+               color: 'rgba(255,255,255,0.6)',
+               fontFamily: '"Roboto", sans-serif',
+               '&:hover': {
+                   color: 'rgba(255,255,255,0.9)',
+                   backgroundColor: 'rgba(255,255,255,0.05)'
+               }
+           }}
+       >
+           Zurück zur Startseite
+       </Button>
+     </Paper>
+   </Container>
+ );
+};
+
+export default StartPage;
+
+src/pages/game/PlayPage.tsx
+// File: src/pages/game/PlayPage.tsx
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
+import { supabase } from '../../services/supabaseClient.ts';
+import {
+ Container, Paper, Typography, Button, CircularProgress, Alert, Box,
+ List, ListItem, ListItemButton, Divider, CardMedia, useTheme, IconButton,
+ Fade, Slide, Grow, Collapse, Stack
+} from '@mui/material';
+import { GameScene, GameChoice, PlayerState, NextSceneResponse } from '../../types/gameTypes.ts';
+import { useNotification } from '../../context/NotificationContext.tsx';
+import ReplayIcon from '@mui/icons-material/Replay';
+import HomeIcon from '@mui/icons-material/Home';
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
+import VolumeOffIcon from '@mui/icons-material/VolumeOff';
+import ImageIcon from '@mui/icons-material/Image';
+// import MusicNoteIcon from '@mui/icons-material/MusicNote'; // Nicht direkt verwendet
+
+const PlayPage: React.FC = () => {
+ const { sessionId } = useParams<{ sessionId: string }>();
+ const navigate = useNavigate();
+ const theme = useTheme();
+ const { showToast } = useNotification();
+
+ const [currentScene, setCurrentScene] = useState<GameScene | null>(null);
+ const [playerState, setPlayerState] = useState<PlayerState | null>(null);
+ const [isLoading, setIsLoading] = useState(true);
+ const [isChoosing, setIsChoosing] = useState(false);
+ const [showScene, setShowScene] = useState(false);
+ const [isMusicPlaying, setIsMusicPlaying] = useState(true);
+ const audioRef = useRef<HTMLAudioElement>(null);
+
+ const fetchInitialOrCurrentState = useCallback(async () => {
+   if (!sessionId) {
+     showToast("Keine Session ID gefunden. Das Spiel kann nicht geladen werden.", "error");
+     setIsLoading(false);
+     navigate('/play/start');
+     return;
+   }
+
+   setIsLoading(true);
+   setShowScene(false);
+
+   try {
+     const { data: sessionDetails, error: sessionError } = await supabase
+       .from('player_sessions')
+       .select(`
+         id,
+         player_flags,
+         player_stats,
+         player_inventory,
+         current_scene_id,
+         current_scene:scenes (
+           id,
+           scene_slug,
+           title_for_admin,
+           text_for_player,
+           image_url,
+           music_url,
+           choices(*, order_in_scene)
+         )
+       `)
+       .eq('id', sessionId)
+       .single();
+
+     if (sessionError || !sessionDetails || !sessionDetails.current_scene) {
+       console.error("Error fetching session details or current scene:", sessionError);
+       throw new Error(sessionError?.message || 'Spielsession oder aktuelle Szene nicht gefunden. Möglicherweise ist die Session abgelaufen oder ungültig.');
+     }
+
+     setCurrentScene({
+       id: sessionDetails.current_scene.id,
+       slug: sessionDetails.current_scene.scene_slug,
+       title: sessionDetails.current_scene.title_for_admin,
+       text: sessionDetails.current_scene.text_for_player || "Die Mysterien dieser Szene sind noch verborgen...",
+       imageUrl: sessionDetails.current_scene.image_url,
+       musicUrl: sessionDetails.current_scene.music_url,
+       choices: (sessionDetails.current_scene.choices || [])
+           .sort((a: any, b: any) => (a.order_in_scene ?? 0) - (b.order_in_scene ?? 0))
+           .filter((c: any) => c.player_facing_text)
+           .map((c: any) => ({ id: c.id, text: c.player_facing_text }))
+     });
+
+     setPlayerState({
+       flags: sessionDetails.player_flags || {},
+       stats: sessionDetails.player_stats || {},
+       inventory: sessionDetails.player_inventory || [],
+     });
+     setShowScene(true);
+   } catch (err: any) {
+     console.error("Error fetching initial/current state:", err);
+     showToast(err.message || 'Fehler beim Laden des Spiels. Bitte versuche, ein neues Spiel zu starten.', 'error');
+     navigate('/play/start');
+   } finally {
+     setIsLoading(false);
+   }
+ }, [sessionId, navigate, showToast]);
+
+ useEffect(() => {
+   fetchInitialOrCurrentState();
+ }, [fetchInitialOrCurrentState]);
+
+ const handleChoiceClick = async (choiceId: string) => {
+   if (!sessionId) return;
+   setIsChoosing(true);
+   setShowScene(false);
+
+   try {
+     const { data, error: functionError } = await supabase.functions.invoke<NextSceneResponse>(
+       'generate-next-scene',
+       {
+         body: {
+           player_session_id: sessionId,
+           chosen_option_id: choiceId,
+         },
+       }
+     );
+
+     if (functionError) {
+       console.error("Function Error (generate-next-scene):", functionError);
+       throw new Error(functionError.message || 'Fehler beim Generieren der nächsten Szene.');
+     }
+
+     if (data && data.new_scene_id) {
+       setCurrentScene({
+         id: data.new_scene_id,
+         slug: data.scene_slug,
+         title: data.scene_title,
+         text: data.scene_text,
+         imageUrl: data.image_url,
+         musicUrl: data.music_url,
+         choices: data.choices.filter(c => c.text),
+       });
+       setPlayerState(data.updated_player_state);
+       showToast("Die Geschichte entwickelt sich...", "info");
+       setShowScene(true);
+       if (audioRef.current && data.music_url) {
+           if(isMusicPlaying) audioRef.current.play().catch(e => console.warn("Audio autoplay prevented:", e));
+       }
+     } else {
+       showToast('Keine gültigen Daten von der nächsten Szene erhalten. Das Orakel schweigt.', 'warning');
+       setShowScene(true);
+     }
+   } catch (err: any) {
+     console.error("Error handling choice:", err);
+     showToast(err.message || 'Fehler beim Verarbeiten deiner Wahl.', 'error');
+     setShowScene(true);
+   } finally {
+     setIsChoosing(false);
+   }
+ };
+
+ const toggleMusic = () => {
+   if (audioRef.current) {
+     if (isMusicPlaying) {
+       audioRef.current.pause();
+     } else {
+       audioRef.current.play().catch(e => console.warn("Audio play prevented:", e));
+     }
+     setIsMusicPlaying(!isMusicPlaying);
+   }
+ };
+
+ useEffect(() => {
+   if (audioRef.current) {
+     if (isMusicPlaying && currentScene?.musicUrl) {
+       audioRef.current.play().catch(e => console.warn("Audio autoplay prevented on load:", e));
+     } else {
+       audioRef.current.pause();
+     }
+   }
+ }, [isMusicPlaying, currentScene?.musicUrl]);
+
+ if (isLoading) {
+   return (
+     <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', p: 2, background: theme.palette.grey[900], color: 'white' }}>
+       <CircularProgress size={60} color="secondary"/>
+       <Typography variant="h6" sx={{ mt: 3, fontFamily: '"Quintessential", serif' }}>Das magische Buch öffnet seine Seiten...</Typography>
+     </Box>
+   );
+ }
+
+ if (!currentScene) {
+   return (
+     <Container maxWidth="md" sx={{ py: 4, textAlign: 'center', background: theme.palette.grey[900], minHeight: '100vh', color: 'white' }}>
+       <Paper elevation={3} sx={{ p: 3, backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(5px)' }}>
+           <Typography variant="h5" gutterBottom sx={{fontFamily: '"Cinzel", serif'}}>Ein unerwartetes Ende?</Typography>
+           <Alert severity="warning" sx={{mb: 2}}>Die aktuelle Szene konnte nicht geladen werden. Möglicherweise ist das Abenteuer hier zu Ende oder ein Fehler ist aufgetreten.</Alert>
+           <Button variant="contained" color="secondary" onClick={() => navigate('/play/start')} sx={{mr:1}}>
+           Neues Spiel starten
+           </Button>
+           <Button variant="outlined" color="primary" onClick={fetchInitialOrCurrentState} disabled={isLoading}>
+           Erneut versuchen
+           </Button>
+       </Paper>
+     </Container>
+   );
+ }
+
+ return (
+   <Container
+       maxWidth="lg"
+       sx={{
+           py: {xs: 2, sm: 3, md: 4},
+           minHeight: '100vh',
+           display: 'flex',
+           flexDirection: 'column',
+           background: 'url("https://www.transparenttextures.com/patterns/old-paper.png"), linear-gradient(to bottom, #614A3A, #3E2E22)',
+           backgroundBlendMode: 'overlay, normal',
+           color: '#EAE0D5',
+           fontFamily: '"Roboto Slab", serif',
+       }}
+   >
+     {currentScene.musicUrl && (
+       <audio ref={audioRef} src={currentScene.musicUrl} loop onError={(e) => console.warn("Error loading audio:", e.currentTarget.error)}>
+           Dein Browser unterstützt das Audio-Element nicht.
+       </audio>
+     )}
+     <Grow in={showScene} timeout={700}>
+       <Paper
+           elevation={10}
+           sx={{
+           p: { xs: 2, sm: 3, md: 4 },
+           mb: 3,
+           backgroundColor: 'rgba(40, 30, 25, 0.92)',
+           backdropFilter: 'blur(4px)',
+           border: '3px double #B08D57',
+           borderRadius: '8px',
+           boxShadow: '0 12px 25px rgba(0,0,0,0.6)',
+           color: '#EAE0D5',
+           }}
+       >
+           {currentScene.imageUrl ? (
+           <CardMedia
+               component="img"
+               image={currentScene.imageUrl}
+               alt={currentScene.title || 'Szenenbild'}
+               sx={{
+               width: '100%',
+               maxHeight: {xs: '200px', sm: '250px', md: '350px'},
+               objectFit: 'cover',
+               mb: 2.5,
+               borderRadius: '4px',
+               border: '2px solid #8C6B42',
+               boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)',
+               }}
+               onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+                   (e.target as HTMLImageElement).style.display = 'none';
+               }}
+           />
+           ) : (
+               <Box sx={{display: 'flex', justifyContent:'center', alignItems:'center', height: {xs: 100, sm:150}, backgroundColor: 'rgba(0,0,0,0.2)', mb: 2.5, borderRadius: '4px', border: '2px dashed #8C6B42'}}>
+                   <ImageIcon sx={{fontSize: 50, color: '#8C6B42'}}/>
+               </Box>
+           )}
+
+           <Typography variant="h4" component="h1" gutterBottom sx={{ fontFamily: '"Cinzel Decorative", cursive', fontWeight: 'bold', color: '#FFD700', textAlign: 'center', textShadow: '1px 1px 3px rgba(0,0,0,0.7)' }}>
+           {currentScene.title || 'Ein unbekannter Ort'}
+           </Typography>
+           <Divider sx={{ my: 2, borderColor: 'rgba(176, 141, 87, 0.5)' }} />
+           <Typography variant="body1" component="div" sx={{ whiteSpace: 'pre-wrap', mb: 3, fontSize: '1.15rem', lineHeight: 1.8, fontFamily: '"EB Garamond", serif', textAlign: 'justify', hyphens: 'auto' }}>
+           {currentScene.text}
+           </Typography>
+       </Paper>
+     </Grow>
+     <Collapse in={showScene && !isChoosing}>
+       <Paper
+           elevation={6}
+           sx={{
+               p: { xs: 1.5, sm: 2, md: 3 },
+               backgroundColor: 'rgba(60, 45, 38, 0.88)',
+               backdropFilter: 'blur(3px)',
+               border: '2px solid #A17A48',
+               borderRadius: '8px',
+               mb: 3,
+           }}
+       >
+           <Typography variant="h6" sx={{ mb: 2, fontFamily: '"MedievalSharp", cursive', color: '#FFDEAD', textAlign:'center' }}>Deine nächste Handlung?</Typography>
+           {isChoosing && <Box sx={{display: 'flex', justifyContent: 'center', my:3}}><CircularProgress color="secondary"/></Box>}
+
+           {!isChoosing && currentScene.choices && currentScene.choices.length > 0 && (
+               <List disablePadding>
+               {currentScene.choices.map((choice, index) => (
+                   <Slide direction="up" in={showScene} timeout={500 + index * 150} key={choice.id}>
+                   <ListItem disablePadding sx={{mb: 1.5}}>
+                       <ListItemButton
+                       onClick={() => handleChoiceClick(choice.id)}
+                       disabled={isChoosing}
+                       sx={{
+                           py: 1.8,
+                           px: 2.5,
+                           transition: 'background-color 0.3s, transform 0.2s',
+                           fontFamily: '"MedievalSharp", cursive',
+                           fontSize: '1.25rem',
+                           color: '#EAE0D5',
+                           border: '2px solid rgba(176, 141, 87, 0.6)',
+                           borderRadius: '6px',
+                           textAlign: 'center',
+                           justifyContent: 'center',
+                           '&:hover': {
+                               backgroundColor: 'rgba(255, 222, 173, 0.15)',
+                               color: '#FFD700',
+                               transform: 'scale(1.02)',
+                               borderColor: '#FFD700',
+                           },
+                       }}
+                       >
+                       {choice.text}
+                       </ListItemButton>
+                   </ListItem>
+                   </Slide>
+               ))}
+               </List>
+           )}
+
+           {!isChoosing && (!currentScene.choices || currentScene.choices.length === 0) && (
+               <Typography sx={{my: 2, fontStyle: 'italic', textAlign: 'center', fontFamily: '"Quintessential", serif', color: 'rgba(234, 224, 213, 0.7)'}}>
+                   Das Buch scheint an dieser Stelle keine weiteren Pfade zu offenbaren. Das Abenteuer endet hier... vorerst.
+               </Typography>
+           )}
+       </Paper>
+     </Collapse>
+     {playerState && (
+       <Collapse in={showScene}>
+       <Paper elevation={2} sx={{ p: 2, mt: 'auto', mb:2, backgroundColor: 'rgba(0,0,0,0.5)', fontSize: '0.85rem', color: 'rgba(255,255,255,0.75)', borderRadius: '8px' }}>
+         <Typography variant="overline" display="block" sx={{color: '#FFDEAD', mb: 0.5}}>Status des Abenteurers:</Typography>
+         <Typography variant="caption" sx={{fontFamily: 'monospace', display: 'block', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: '100px', overflowY: 'auto'}}>
+           Flags: {Object.keys(playerState.flags).length > 0 ? JSON.stringify(playerState.flags, null, 2) : 'Keine aktiven Flags'}
+         </Typography>
+       </Paper>
+       </Collapse>
+     )}
+     <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 'auto', pt: 2, pb:1 }}>
+           {currentScene.musicUrl && (
+                <Tooltip title={isMusicPlaying ? "Musik stummschalten" : "Musik abspielen"}>
+                   <IconButton onClick={toggleMusic} sx={{color: 'rgba(255,222,173,0.8)', '&:hover': {color: '#FFDEAD'}}}>
+                       {isMusicPlaying ? <VolumeUpIcon /> : <VolumeOffIcon />}
+                   </IconButton>
+               </Tooltip>
+           )}
+           <Button
+               variant="outlined"
+               startIcon={<HomeIcon />}
+               onClick={() => navigate('/')}
+               sx={{borderColor: 'rgba(255,222,173,0.5)', color: 'rgba(255,222,173,0.8)', '&:hover': {borderColor: '#FFDEAD', color: '#FFDEAD', backgroundColor: 'rgba(255,222,173,0.1)'}}}
+           >
+               Hauptmenü
+           </Button>
+           <Button
+               variant="contained"
+               color="secondary"
+               startIcon={<ReplayIcon />}
+               onClick={() => navigate('/play/start')}
+                sx={{'&:hover': {backgroundColor: 'secondary.dark'}}}
+           >
+               Neues Spiel
+           </Button>
+       </Stack>
+   </Container>
+ );
+};
+
+export default PlayPage;
+
+Dieses Dokument enthält nun eine sehr detaillierte Zusammenfassung deines Projekts, von der ursprünglichen Planung bis zum aktuellen Stand des generierten Codes. Du kannst es als zentrale Referenz und Backup verwenden.
