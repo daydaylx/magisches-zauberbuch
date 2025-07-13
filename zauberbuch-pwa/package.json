@@ -1,0 +1,38 @@
+{
+  "name": "zauberbuch-pwa",
+  "version": "1.0.0",
+  "description": "Das Magische Zauberbuch – PWA Textadventure",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "echo \\"Kein Testsystem konfiguriert\\" && exit 0",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.11.1",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^5.14.0",
+    "@mui/material": "^5.14.4",
+    "@supabase/supabase-js": "^2.42.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.23.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.0.3",
+    "autoprefixer": "^10.4.17",
+    "postcss": "^8.4.34",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.9",
+    "@storybook/react-vite": "^8.0.0",
+    "@storybook/addon-essentials": "^8.0.0",
+    "@storybook/addon-links": "^8.0.0",
+    "@storybook/addon-interactions": "^8.0.0",
+    "@storybook/testing-library": "^0.2.0",
+    "@storybook/jest": "^0.0.11",
+    "babel-plugin-macros": "^3.1.0"
+  }
+}
